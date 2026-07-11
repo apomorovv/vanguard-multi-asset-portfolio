@@ -1,6 +1,6 @@
 # Classical Model Formulation for Multi-Asset Portfolio Construction
 
-This document explains the classical portfolio optimization model implemented in this project in a graduate-level but accessible way. The goal is to connect the mathematical formulation to the code in the repository and to provide a roadmap for learning the underlying ideas.
+This document explains the classical portfolio optimization model implemented in this project. The goal is to connect the mathematical formulation to the code in the repository and to provide a roadmap for learning the underlying ideas.
 
 ## 1. The problem in plain English
 
@@ -129,7 +129,7 @@ A portfolio optimizer is essentially answering this question:
 
 The continuous version answers that with real-valued weights. The discrete version answers a slightly more constrained version of the same question.
 
-## 9. Recommended learning resources
+## 9. Recommended resources
 
 ### Portfolio theory
 
