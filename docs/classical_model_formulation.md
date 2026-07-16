@@ -1,158 +1,186 @@
-# Classical Model Formulation for Multi-Asset Portfolio Construction
+# Classical Portfolio Solution — Implementation Guide
 
-This document explains the classical portfolio optimization model implemented in this project. The goal is to connect the mathematical formulation to the code in the repository and to provide a roadmap for learning the underlying ideas.
+This document explains the *classical* portion of the multi-asset portfolio
+project. It is the reference implementation that the QUBO and quantum solvers
+will later be validated against, and it directly implements Sections 5–8 and 11
+of [mathematical_model.md](mathematical_model.md).
 
-## 1. The problem in plain English
+---
 
-We want to choose how much capital to allocate to each asset in a portfolio. The allocation should:
+## 1. What was implemented
 
-- earn a strong expected return,
-- avoid taking too much risk,
-- avoid excessive trading costs, and
-- satisfy portfolio constraints such as budget, bounds, and sector exposure limits.
+| Component | File | Model reference |
+|-----------|------|-----------------|
+| Synthetic asset universe | [src/data.py](../src/data.py) | Sections 2–3 |
+| Portfolio metrics + constraint checks | [src/metrics.py](../src/metrics.py) | Sections 5, 10, 11 |
+| Continuous mean-variance optimizer | [src/classical.py](../src/classical.py) | Sections 6–7 |
+| Exact discrete optimizer | [src/classical.py](../src/classical.py) | Section 8 |
+| Results / demo script | [scripts/run_classical.py](../scripts/run_classical.py) | Section 12 |
+| Tests | [tests/test_metrics.py](../tests/test_metrics.py), [tests/test_classical.py](../tests/test_classical.py) | — |
 
-This is the classical mean-variance portfolio optimization problem, originally developed in modern portfolio theory.
+This closes the gap identified earlier: the mathematical model was fully
+specified, but no classical optimizer existed in src/.
 
-## 2. Mathematical formulation
+---
 
-Let:
+## 2. The problem being solved
 
-- $w \in \mathbb{R}^n$ be the vector of portfolio weights,
-- $\mu$ be the vector of expected returns,
-- $\Sigma$ be the covariance matrix of asset returns,
-- $\gamma > 0$ be the risk-aversion parameter,
-- $c$ be the vector of linear transaction costs,
-- $w_{\text{prev}}$ be the previous portfolio allocation.
-
-The objective is to maximize the utility
-
-$$
-U(w) = \mu^\top w - \frac{\gamma}{2} w^\top \Sigma w - \lambda_c \, c^\top |w - w_{\text{prev}}|
-$$
-
-where:
-
-- $\mu^\top w$ rewards expected return,
-- $w^\top \Sigma w$ penalizes portfolio variance (risk),
-- the turnover-cost term discourages large deviations from the previous portfolio.
-
-The optimization is subject to constraints such as:
+Given expected returns $\mu$, a covariance matrix $\Sigma$, income yields $y$,
+transaction-cost coefficients $c$, and the current allocation $w^{(0)}$, choose
+target weights $w$ that minimise
 
 $$
-\sum_{i=1}^n w_i = \text{budget},
+\lambda_{\text{risk}}\, w^{\mathsf T}\Sigma w
+-\lambda_{\text{return}}\, \mu^{\mathsf T} w
+-\lambda_{\text{income}}\, y^{\mathsf T} w
++\lambda_{\text{cost}}\, \sum_i c_i\,|w_i - w_i^{(0)}|
 $$
 
-$$
-l_i \le w_i \le u_i \quad \text{for each asset } i,
-$$
+subject to the *hard constraints*:
 
-and optionally:
+- *Full investment:* $\sum_i w_i = 1$
+- *Long-only / per-asset bounds:* $l_i \le w_i \le u_i$
+- *Group exposure limits:* $L_g \le \sum_i a_{gi} w_i \le U_g$
 
-- a minimum target return,
-- sector exposure limits,
-- other practical portfolio rules.
+A solution that violates any hard constraint is infeasible regardless of its
+objective value (Section 10). This matches the challenge rule that the winning
+solution must have *zero hard-constraint breaches*.
 
-## 3. Interpretation of each term
+---
 
-### Expected return term
+## 3. Synthetic data (src/data.py)
 
-The term $\mu^\top w$ measures the portfolio’s expected gain. If an asset has a high expected return and receives a larger weight, the portfolio’s expected return increases.
+generate_synthetic_universe() builds a deterministic six-asset universe (US
+equity, international equity, government bonds, corporate bonds, commodities,
+cash) grouped into equity, fixed income, alternatives and cash. All values are
+illustrative and contain no real or confidential data, satisfying the
+challenge's data-privacy rule.
 
-### Risk term
+Key points:
 
-The term $w^\top \Sigma w$ measures portfolio variance. Covariance captures how assets move together. Two assets can both have high returns individually, but if they move together strongly, combining them may not diversify risk effectively.
+- The covariance matrix is built as $\Sigma_{ij} = \rho_{ij}\sigma_i\sigma_j$
+  and checked for positive semidefiniteness; if needed, _nearest_psd clips
+  negative eigenvalues. A PSD covariance keeps the continuous problem convex.
+- PortfolioProblem is a dataclass holding every parameter. The group
+  membership matrix $A$ (shape $G\times n$) is derived from asset_group.
+- save_problem / load_problem serialise the universe to
+  data/synthetic_universe.json so every solver reads identical inputs.
 
-### Transaction cost term
+---
 
-The term $c^\top |w - w_{\text{prev}}|$ penalizes changing the portfolio too much. This is useful when the portfolio is being rebalanced and trading costs matter.
+## 4. Metrics and constraint checking (src/metrics.py)
 
-## 4. Continuous-weight formulation
+All solvers are scored with the *same* functions so comparisons are fair:
 
-In the continuous model, weights are allowed to be any real number between lower and upper bounds. This corresponds to the classical Markowitz formulation.
+- expected_return, variance, volatility, income, turnover,
+  transaction_cost — the quantities from Sections 5 and 11.
+- constraint_report(w, problem) returns a ConstraintReport with:
+  - feasible — whether every hard constraint holds,
+  - breaches — number of violated constraints,
+  - max_violation — the largest single violation,
+  - details — human-readable descriptions (used by the co-pilot rationale).
 
-The implementation in [src/vanguard_portfolio/classical_continuous.py](src/vanguard_portfolio/classical_continuous.py) does the following:
+portfolio_metrics(w, problem) bundles all six metrics into a dictionary.
 
-1. Stores the expected-return vector and covariance matrix.
-2. Defines the utility function.
-3. Builds constraints for the budget and any additional rules.
-4. Uses SciPy’s SLSQP optimizer to solve the constrained nonlinear problem.
+---
 
-In other words, the code searches for the best continuous portfolio weights that maximize utility while satisfying the constraints.
+## 5. Continuous optimizer (src/classical.py)
 
-## 5. Discrete-weight formulation
+solve_continuous(problem, prefs) solves the convex quadratic program of
+Section 6 using SciPy's SLSQP method. To keep the transaction-cost term linear,
+the decision vector is augmented as $z = [w, t]$ where $t_i$ models
+$|w_i - w_i^{(0)}|$ through the two inequalities
+$t_i \ge w_i - w_i^{(0)}$ and $t_i \ge w_i^{(0)} - w_i$ (Section 6). The budget
+is an equality constraint; bounds and group limits are inequality constraints.
 
-In the discrete model, the portfolio is not allowed to use arbitrary real-valued weights. Instead, the total budget is divided into a fixed number of discrete lots. If there are $n_{\text{lots}}$ lots, then each asset $i$ receives an integer number of lots $k_i$ such that:
+The returned SolveResult carries the weights, objective value, runtime,
+feasibility flag, breach count, maximum violation, and the full metric set. This
+continuous optimum is the *ground-truth reference* for the whole project and,
+being a relaxation, is a lower bound on the discrete objective.
 
-$$
-\sum_i k_i = n_{\text{lots}},
-$$
+### Tunable investor goals
 
-and the corresponding weight is
+Preferences holds the four $\lambda$ coefficients. PRESETS exposes five
+goals (Deliverable 5):
 
-$$
-w_i = \frac{\text{budget}}{n_{\text{lots}}} k_i.
-$$
+| Preset | Emphasis |
+|--------|----------|
+| balanced | Neutral risk/return trade-off |
+| growth | Higher return weight, lower risk aversion |
+| income | Adds income-yield preference |
+| drawdown_control | Strong risk aversion (lower volatility) |
+| cost_sensitive | Heavy penalty on turnover / transaction cost |
 
-This creates a discrete lattice of feasible portfolios. It is useful because it is closer to the integer or binary decision variables that appear in later quantum/QUBO formulations.
+---
 
-The implementation in [src/vanguard_portfolio/classical_discrete.py](src/vanguard_portfolio/classical_discrete.py) uses either:
+## 6. Discrete optimizer (src/classical.py)
 
-- exhaustive search (the `brute` method), or
-- simulated annealing (the `anneal` method).
+solve_discrete(problem, prefs, units=M) implements Section 8: weights are
+restricted to multiples of $1/M$, i.e. $w_i = q_i/M$ with integer $q_i$ and
+$\sum_i q_i = M$. It enumerates *every* feasible integer allocation
+(_integer_allocations prunes on per-asset bounds and remaining budget), rejects
+those breaching group limits, and returns the one with the lowest objective.
 
-## 6. Why the two formulations are both useful
+Because it is exhaustive, its result is the *exact discrete optimum* — the
+reference the QUBO/quantum solvers must reproduce. At $M=10$ with six assets the
+search space is only a few thousand allocations, so it runs instantly.
 
-The continuous model is mathematically elegant and gives the classical benchmark. The discrete model is more practical for settings where allocations must be made in discrete units, or where the later quantum formulation requires binary/integer decisions.
+---
 
-Together they provide a useful comparison:
+## 7. How to run and see results
 
-- continuous optimization gives the idealized optimum,
-- discrete optimization shows the cost of restricting allocations to a lattice.
+Install dependencies (note the file is named requiremnts.txt):
 
-## 7. How the code maps to the math
+powershell
+python -m pip install -r requiremnts.txt
 
-The core methods in the code correspond closely to the mathematics:
 
-- `expected_return(w)` computes $\mu^\top w$
-- `variance(w)` computes $w^\top \Sigma w$
-- `turnover(w)` computes $\sum_i |w_i - w_{\text{prev},i}|$
-- `cost(w)` computes $c^\top |w - w_{\text{prev}}|$
-- `utility(w)` combines them into the objective
+Run the demo:
 
-The optimizer then searches for the vector $w$ that maximizes this utility under the constraints.
+powershell
+python scripts/run_classical.py
 
-## 8. A useful way to think about it
 
-A portfolio optimizer is essentially answering this question:
+The script:
 
-> Among all portfolios that satisfy my constraints, which one gives the best tradeoff between reward and risk?
+1. Builds and saves the synthetic universe to data/synthetic_universe.json.
+2. Prints the recommended allocation for the continuous and discrete solvers
+   (with a text bar chart) plus the L1 distance between them.
+3. Prints a *solver-comparison table* across all five presets showing
+   objective, expected return, volatility, income, turnover, cost, breaches and
+   runtime.
+4. Saves a bar chart of the balanced allocation vs. the current portfolio to
+   results/allocation_balanced.png.
 
-The continuous version answers that with real-valued weights. The discrete version answers a slightly more constrained version of the same question.
+---
 
-## 9. Recommended resources
+## 8. Tests
 
-### Portfolio theory
+Run the suite from the repository root:
 
-- Harry Markowitz, “Portfolio Selection” (1952)
-- Bodie, Kane, and Marcus, “Investments”
-- Elton, Gruber, Brown, and Goetzmann, “Modern Portfolio Theory and Investment Analysis”
+powershell
+python -m pytest -q
 
-### Optimization
 
-- Stephen Boyd and Lieven Vandenberghe, “Convex Optimization”
-- SciPy documentation for `scipy.optimize.minimize` and `SLSQP`
+Coverage highlights:
 
-### Discrete and combinatorial optimization
+- *Data:* covariance is PSD and matches $\rho\sigma\sigma$; group matrix is
+  well-formed; the current portfolio is feasible; save/load round-trips.
+- *Metrics:* each formula matches its definition; turnover/cost are zero at the
+  current allocation; the constraint report flags budget, bound and group
+  breaches.
+- *Optimizers:* continuous and discrete solutions are feasible with zero
+  breaches; discrete weights are multiples of $1/M$; the discrete objective is
+  never better than the continuous relaxation; higher risk aversion lowers
+  volatility; the income preset raises income; the cost-sensitive preset lowers
+  turnover; every preset stays feasible.
 
-- Any introductory text on integer programming or combinatorial optimization
-- Materials on QUBO/Ising formulations, since these are closely related to the discrete portfolio formulation in this project
+---
 
-## 10. Suggested reading order for this repository
+## 9. Where this fits in the roadmap
 
-1. Read [src/vanguard_portfolio/classical_continuous.py](src/vanguard_portfolio/classical_continuous.py) to understand the continuous objective and constraints.
-2. Read [src/vanguard_portfolio/classical_discrete.py](src/vanguard_portfolio/classical_discrete.py) to see how the continuous problem becomes a discrete one.
-3. Review the tests in [tests/test_classical_continuous.py](tests/test_classical_continuous.py) and [tests/test_classical_discrete.py](tests/test_classical_discrete.py) to see the expected behavior.
-
-## 11. Summary
-
-The classical model in this project is a constrained mean-variance portfolio optimization problem. The continuous version uses real-valued weights and a nonlinear constrained solver, while the discrete version uses integer lots and is more aligned with later quantum or QUBO-based formulations.
+This classical layer delivers Deliverables 3–7 (synthetic data, baseline
+mean-variance optimizer with constraints and scenario weights, tunable goals,
+comparison metrics, and classical validation). It provides the exact discrete
+optimum and metric harness that the QUBO encoding and quantum solver will be
+checked against next.

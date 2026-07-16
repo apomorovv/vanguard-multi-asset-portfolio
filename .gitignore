@@ -29,13 +29,13 @@ secrets.yaml
 # Generated data
 data/raw/*
 data/processed/*
-data/synthetic/*
+# data/synthetic/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
 
 # Generated results
-results/*
+# results/*
 !results/README.md
 
 # Logs
