@@ -1,186 +1,133 @@
-# Classical Portfolio Solution — Implementation Guide
+# Classical Baseline: Implementation and Solver Comparison
 
-This document explains the *classical* portion of the multi-asset portfolio
-project. It is the reference implementation that the QUBO and quantum solvers
-will later be validated against, and it directly implements Sections 5–8 and 11
-of [mathematical_model.md](mathematical_model.md).
+## Outcome
 
----
+The classical layer now has one problem schema, one objective, independent
+validation, exact tiny-instance certification, optional commercial/open-source
+backend comparisons, repeated stochastic trials, and generated artifacts.
 
-## 1. What was implemented
+The earlier code had two independent `PortfolioProblem` definitions and two
+objectives with different scaling and constraint treatment. Those are replaced
+by the following dependency direction:
 
-| Component | File | Model reference |
-|-----------|------|-----------------|
-| Synthetic asset universe | [src/data.py](../src/data.py) | Sections 2–3 |
-| Portfolio metrics + constraint checks | [src/metrics.py](../src/metrics.py) | Sections 5, 10, 11 |
-| Continuous mean-variance optimizer | [src/classical.py](../src/classical.py) | Sections 6–7 |
-| Exact discrete optimizer | [src/classical.py](../src/classical.py) | Section 8 |
-| Results / demo script | [scripts/run_classical.py](../scripts/run_classical.py) | Section 12 |
-| Tests | [tests/test_metrics.py](../tests/test_metrics.py), [tests/test_classical.py](../tests/test_classical.py) | — |
+```mermaid
+flowchart LR
+    S["schemas.py"] --> P["portfolio_model.py"]
+    P --> C["classical_continuous.py"]
+    P --> D["classical_discrete.py"]
+    C --> V["validation.py"]
+    D --> V
+    V --> B["classical.py benchmark"]
+    B --> G["tables + plots"]
+```
 
-This closes the gap identified earlier: the mathematical model was fully
-specified, but no classical optimizer existed in src/.
+No solver defines a private objective or feasibility rule.
 
----
+## Backend matrix
 
-## 2. The problem being solved
+| Backend | Model | Role | Certificate |
+|---|---|---|---|
+| SciPy SLSQP | Continuous QP | Always-available numerical baseline | `optimal=True` only on successful convergence plus independent feasibility; no dual bound |
+| OSQP | Continuous QP | Specialized open-source convex QP comparison | Solver status/residuals |
+| CVXPY + CLARABEL | Continuous conic/QP representation | Independent modeling stack | Backend status |
+| Gurobi QP | Continuous QP | Commercial cross-check | Optimal status |
+| Exact enumeration | Discrete lot model | Tiny-instance truth | Exhaustive proof over all feasible lots |
+| Swap local search | Discrete lot model | Deterministic heuristic control | No global certificate |
+| Simulated annealing + swap | Discrete lot model | Seeded stochastic heuristic | No global certificate |
+| Gurobi MIQP | Discrete lot model | Scalable exact/bounded reference | Optimal status or incumbent/bound/gap |
+| CVXPY + SCIP | Discrete lot MIQP | Open-source MIQP comparison when installed | Backend status |
 
-Given expected returns $\mu$, a covariance matrix $\Sigma$, income yields $y$,
-transaction-cost coefficients $c$, and the current allocation $w^{(0)}$, choose
-target weights $w$ that minimise
+OSQP solves convex programs of the form
+\(\tfrac12x^TPx+q^Tx\) subject to \(l\le Ax\le u\). The repository builds that
+matrix form once and uses the same equations for direct validation. Gurobi sees
+a QP when variables are continuous and an MIQP when lot variables are integer.
 
-$$
-\lambda_{\text{risk}}\, w^{\mathsf T}\Sigma w
--\lambda_{\text{return}}\, \mu^{\mathsf T} w
--\lambda_{\text{income}}\, y^{\mathsf T} w
-+\lambda_{\text{cost}}\, \sum_i c_i\,|w_i - w_i^{(0)}|
-$$
+## Why SciPy is not called "ground truth" by itself
 
-subject to the *hard constraints*:
+The model is convex, so a correctly converged continuous solve is globally
+optimal in theory. In practice, SLSQP is a general constrained numerical
+method and does not provide the same certificate as exact enumeration or an
+MIQP bound. The credible claim is therefore based on agreement among independent
+backends and direct feasibility/objective checks, not on the package name.
 
-- *Full investment:* $\sum_i w_i = 1$
-- *Long-only / per-asset bounds:* $l_i \le w_i \le u_i$
-- *Group exposure limits:* $L_g \le \sum_i a_{gi} w_i \le U_g$
+## Fair comparison protocol
 
-A solution that violates any hard constraint is infeasible regardless of its
-objective value (Section 10). This matches the challenge rule that the winning
-solution must have *zero hard-constraint breaches*.
+Every backend receives:
 
----
+1. the same serialized `PortfolioProblem`;
+2. the same `Preferences` coefficients;
+3. the same lot count \(M\) for discrete runs;
+4. the same hard constraints;
+5. the same independent evaluator and tolerance.
 
-## 3. Synthetic data (src/data.py)
+Wall-clock time begins before model construction and ends after the solver
+returns. Native solver time is retained in metadata when available but is not
+substituted for the common wall-clock measure.
 
-generate_synthetic_universe() builds a deterministic six-asset universe (US
-equity, international equity, government bonds, corporate bonds, commodities,
-cash) grouped into equity, fixed income, alternatives and cash. All values are
-illustrative and contain no real or confidential data, satisfying the
-challenge's data-privacy rule.
+Continuous and discrete gaps use separate optimal/exact references. Comparing a
+discrete heuristic directly to the continuous optimum would mix algorithmic
+error with unavoidable discretization error.
 
-Key points:
+Stochastic annealing runs all configured seeds. Reports show every raw run and
+aggregate median/interquartile runtime. The final one-swap polish is part of the
+method name and runtime.
 
-- The covariance matrix is built as $\Sigma_{ij} = \rho_{ij}\sigma_i\sigma_j$
-  and checked for positive semidefiniteness; if needed, _nearest_psd clips
-  negative eigenvalues. A PSD covariance keeps the continuous problem convex.
-- PortfolioProblem is a dataclass holding every parameter. The group
-  membership matrix $A$ (shape $G\times n$) is derived from asset_group.
-- save_problem / load_problem serialise the universe to
-  data/synthetic_universe.json so every solver reads identical inputs.
+## Gurobi setup
 
----
+Install the Python interface:
 
-## 4. Metrics and constraint checking (src/metrics.py)
+```bash
+python -m pip install -e ".[gurobi]"
+```
 
-All solvers are scored with the *same* functions so comparisons are fair:
+Then verify the installation and license separately:
 
-- expected_return, variance, volatility, income, turnover,
-  transaction_cost — the quantities from Sections 5 and 11.
-- constraint_report(w, problem) returns a ConstraintReport with:
-  - feasible — whether every hard constraint holds,
-  - breaches — number of violated constraints,
-  - max_violation — the largest single violation,
-  - details — human-readable descriptions (used by the co-pilot rationale).
+```bash
+python -c "import gurobipy as gp; print(gp.gurobi.version())"
+```
 
-portfolio_metrics(w, problem) bundles all six metrics into a dictionary.
+The benchmark catches both missing-package and license-start failures. A skip is
+written to `benchmark_metadata.json`; it is not converted into an infeasible
+portfolio result.
 
----
+## Expected cross-checks
 
-## 5. Continuous optimizer (src/classical.py)
+At a fixed \(M\):
 
-solve_continuous(problem, prefs) solves the convex quadratic program of
-Section 6 using SciPy's SLSQP method. To keep the transaction-cost term linear,
-the decision vector is augmented as $z = [w, t]$ where $t_i$ models
-$|w_i - w_i^{(0)}|$ through the two inequalities
-$t_i \ge w_i - w_i^{(0)}$ and $t_i \ge w_i^{(0)} - w_i$ (Section 6). The budget
-is an equality constraint; bounds and group limits are inequality constraints.
+- enumeration objective = optimal Gurobi/SCIP MIQP objective, within tolerance;
+- no heuristic objective is below the exact optimum;
+- continuous objective is no greater than the discrete optimum;
+- all reported allocations have zero hard-constraint breaches;
+- matrix-form QP evaluation equals direct `objective_value` evaluation.
 
-The returned SolveResult carries the weights, objective value, runtime,
-feasibility flag, breach count, maximum violation, and the full metric set. This
-continuous optimum is the *ground-truth reference* for the whole project and,
-being a relaxation, is a lower bound on the discrete objective.
+If any relationship fails, stop before running the quantum model. The likely
+causes are objective scaling, lot rounding, a missing hard constraint, or an
+incorrect decode.
 
-### Tunable investor goals
+## Scaling interpretation
 
-Preferences holds the four $\lambda$ coefficients. PRESETS exposes five
-goals (Deliverable 5):
+Enumeration is deliberately retained only as a tiny truth oracle. The number of
+unbounded nonnegative compositions is
 
-| Preset | Emphasis |
-|--------|----------|
-| balanced | Neutral risk/return trade-off |
-| growth | Higher return weight, lower risk aversion |
-| income | Adds income-yield preference |
-| drawdown_control | Strong risk aversion (lower volatility) |
-| cost_sensitive | Heavy penalty on turnover / transaction cost |
+\[
+{M+n-1\choose n-1},
+\]
 
----
+before bounds and groups prune it. It is not a production solver.
 
-## 6. Discrete optimizer (src/classical.py)
+For larger instances:
 
-solve_discrete(problem, prefs, units=M) implements Section 8: weights are
-restricted to multiples of $1/M$, i.e. $w_i = q_i/M$ with integer $q_i$ and
-$\sum_i q_i = M$. It enumerates *every* feasible integer allocation
-(_integer_allocations prunes on per-asset bounds and remaining budget), rejects
-those breaching group limits, and returns the one with the lowest objective.
+- use OSQP/Gurobi/another convex backend for the continuous model;
+- use Gurobi/SCIP/another MIQP solver for a certified discrete result when
+  tractable;
+- otherwise report incumbent and bound/gap, plus identically budgeted heuristic
+  controls.
 
-Because it is exhaustive, its result is the *exact discrete optimum* — the
-reference the QUBO/quantum solvers must reproduce. At $M=10$ with six assets the
-search space is only a few thousand allocations, so it runs instantly.
+## Primary solver documentation
 
----
+- [OSQP problem form and documentation](https://osqp.org/docs/)
+- [CVXPY solver selection and installed backends](https://www.cvxpy.org/tutorial/solvers/index.html)
+- [Gurobi Python API model classes](https://docs.gurobi.com/projects/optimizer/en/current/reference/python/overview.html)
+- [Gurobi quadratic objectives](https://docs.gurobi.com/projects/optimizer/en/current/concepts/modeling/objectives.html)
+- [Gurobi model attributes, including bounds and gaps](https://docs.gurobi.com/projects/optimizer/en/current/reference/attributes/model.html)
 
-## 7. How to run and see results
-
-Install dependencies (note the file is named requiremnts.txt):
-
-powershell
-python -m pip install -r requiremnts.txt
-
-
-Run the demo:
-
-powershell
-python scripts/run_classical.py
-
-
-The script:
-
-1. Builds and saves the synthetic universe to data/synthetic_universe.json.
-2. Prints the recommended allocation for the continuous and discrete solvers
-   (with a text bar chart) plus the L1 distance between them.
-3. Prints a *solver-comparison table* across all five presets showing
-   objective, expected return, volatility, income, turnover, cost, breaches and
-   runtime.
-4. Saves a bar chart of the balanced allocation vs. the current portfolio to
-   results/allocation_balanced.png.
-
----
-
-## 8. Tests
-
-Run the suite from the repository root:
-
-powershell
-python -m pytest -q
-
-
-Coverage highlights:
-
-- *Data:* covariance is PSD and matches $\rho\sigma\sigma$; group matrix is
-  well-formed; the current portfolio is feasible; save/load round-trips.
-- *Metrics:* each formula matches its definition; turnover/cost are zero at the
-  current allocation; the constraint report flags budget, bound and group
-  breaches.
-- *Optimizers:* continuous and discrete solutions are feasible with zero
-  breaches; discrete weights are multiples of $1/M$; the discrete objective is
-  never better than the continuous relaxation; higher risk aversion lowers
-  volatility; the income preset raises income; the cost-sensitive preset lowers
-  turnover; every preset stays feasible.
-
----
-
-## 9. Where this fits in the roadmap
-
-This classical layer delivers Deliverables 3–7 (synthetic data, baseline
-mean-variance optimizer with constraints and scenario weights, tunable goals,
-comparison metrics, and classical validation). It provides the exact discrete
-optimum and metric harness that the QUBO encoding and quantum solver will be
-checked against next.

@@ -1,87 +1,72 @@
-"""Tests for the discrete (integer-lot) mean-variance optimizer."""
+from __future__ import annotations
+
+import unittest
 
 import numpy as np
-import pytest
 
-from src.vanguard_portfolio.classical_continuous import PortfolioProblem, mean_variance_continuous
-from src.vanguard_portfolio.classical_discrete import (
-    MeanVarianceDiscreteOptimizer,
-    mean_variance_discrete,
+from vanguard_portfolio.classical_continuous import solve_continuous_scipy
+from vanguard_portfolio.classical_discrete import (
+    solve_discrete_annealing,
+    solve_discrete_cvxpy,
+    solve_discrete_enumeration,
+    solve_discrete_gurobi,
+    solve_discrete_local_search,
 )
+from vanguard_portfolio.data_generation import generate_synthetic_universe
+from vanguard_portfolio.schemas import SolverUnavailableError
 
 
-@pytest.fixture
-def simple_problem():
-    mu = np.array([0.10, 0.07, 0.03])
-    cov = np.diag([0.04, 0.02, 0.005])
-    return PortfolioProblem(mu, cov, risk_aversion=3.0)
+class DiscreteSolverTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.problem = generate_synthetic_universe()
+
+    def test_exact_enumeration_is_feasible_and_on_grid(self) -> None:
+        result = solve_discrete_enumeration(self.problem, units=10)
+        self.assertTrue(result.optimal)
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.breaches, 0)
+        np.testing.assert_allclose(result.weights * 10, np.rint(result.weights * 10), atol=1e-12)
+
+    def test_continuous_relaxation_is_lower_bound(self) -> None:
+        continuous = solve_continuous_scipy(self.problem)
+        discrete = solve_discrete_enumeration(self.problem, units=10)
+        self.assertLessEqual(continuous.objective, discrete.objective + 1e-8)
+
+    def test_exact_cannot_be_beaten_by_heuristics(self) -> None:
+        exact = solve_discrete_enumeration(self.problem, units=10)
+        local = solve_discrete_local_search(self.problem, units=10)
+        annealing = solve_discrete_annealing(
+            self.problem, units=10, seed=3, n_iterations=1500
+        )
+        self.assertLessEqual(exact.objective, local.objective + 1e-12)
+        self.assertLessEqual(exact.objective, annealing.objective + 1e-12)
+
+    def test_annealing_is_reproducible_for_a_seed(self) -> None:
+        first = solve_discrete_annealing(self.problem, units=10, seed=5, n_iterations=500)
+        second = solve_discrete_annealing(self.problem, units=10, seed=5, n_iterations=500)
+        np.testing.assert_array_equal(first.weights, second.weights)
+        self.assertAlmostEqual(first.objective, second.objective)
+
+    def test_gurobi_miqp_matches_enumeration_when_available(self) -> None:
+        exact = solve_discrete_enumeration(self.problem, units=10)
+        try:
+            gurobi = solve_discrete_gurobi(self.problem, units=10)
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+        self.assertTrue(gurobi.optimal, gurobi.status)
+        self.assertAlmostEqual(gurobi.objective, exact.objective, places=8)
+
+    def test_cvxpy_scip_matches_enumeration_when_available(self) -> None:
+        exact = solve_discrete_enumeration(self.problem, units=10)
+        try:
+            scip = solve_discrete_cvxpy(self.problem, units=10, solver_name="SCIP")
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+        self.assertTrue(scip.optimal, scip.status)
+        self.assertAlmostEqual(scip.objective, exact.objective, places=8)
 
 
-@pytest.mark.parametrize("method", ["brute", "anneal"])
-def test_budget_preserved_by_lots(simple_problem, method):
-    res = mean_variance_discrete(simple_problem, n_lots=10, method=method, seed=0)
-    assert int(res["lots"].sum()) == 10
-    assert res["weights"].sum() == pytest.approx(simple_problem.budget, abs=1e-9)
+if __name__ == "__main__":
+    unittest.main()
 
 
-@pytest.mark.parametrize("method", ["brute", "anneal"])
-def test_weights_are_on_the_lot_grid(simple_problem, method):
-    n_lots = 10
-    res = mean_variance_discrete(simple_problem, n_lots=n_lots, method=method, seed=0)
-    lot_size = simple_problem.budget / n_lots
-    ratios = res["weights"] / lot_size
-    assert np.allclose(ratios, np.round(ratios), atol=1e-9)
-
-
-def test_brute_is_optimal_versus_anneal(simple_problem):
-    brute = mean_variance_discrete(simple_problem, n_lots=8, method="brute")
-    anneal = mean_variance_discrete(simple_problem, n_lots=8, method="anneal", seed=1)
-    # The exhaustive search can never be beaten by annealing.
-    assert brute["utility"] >= anneal["utility"] - 1e-9
-
-
-def test_discrete_approaches_continuous_as_resolution_grows():
-    mu = np.array([0.10, 0.07, 0.03])
-    cov = np.diag([0.04, 0.02, 0.005])
-    problem = PortfolioProblem(mu, cov, risk_aversion=3.0)
-
-    cont = mean_variance_continuous(problem)
-    coarse = mean_variance_discrete(problem, n_lots=4, method="brute")
-    fine = mean_variance_discrete(problem, n_lots=40, method="anneal", seed=0)
-
-    gap_coarse = abs(cont["utility"] - coarse["utility"])
-    gap_fine = abs(cont["utility"] - fine["utility"])
-    # Finer lattice should track the continuous optimum at least as well.
-    assert gap_fine <= gap_coarse + 1e-6
-
-
-def test_lot_bounds_are_respected():
-    mu = np.array([0.10, 0.07, 0.03])
-    cov = np.diag([0.04, 0.02, 0.005])
-    # Cap each asset at 50% of the budget.
-    problem = PortfolioProblem(mu, cov, risk_aversion=3.0, upper_bounds=0.5)
-    res = mean_variance_discrete(problem, n_lots=10, method="brute")
-    assert np.all(res["weights"] <= 0.5 + 1e-9)
-
-
-def test_sector_penalty_discourages_breach():
-    mu = np.array([0.12, 0.11, 0.04, 0.03])
-    cov = np.diag([0.05, 0.05, 0.01, 0.01])
-    problem = PortfolioProblem(
-        mu,
-        cov,
-        risk_aversion=1.0,
-        sector_map=["equity", "equity", "bond", "bond"],
-        sector_limits={"equity": 0.5},
-    )
-    res = mean_variance_discrete(
-        problem, n_lots=10, method="brute", penalty_weight=1000.0
-    )
-    equity_exposure = res["weights"][:2].sum()
-    assert equity_exposure <= 0.5 + 1e-9
-    assert res["sector_penalty"] == pytest.approx(0.0, abs=1e-9)
-
-
-def test_unknown_method_raises(simple_problem):
-    with pytest.raises(ValueError):
-        MeanVarianceDiscreteOptimizer(simple_problem, method="quantum").solve()

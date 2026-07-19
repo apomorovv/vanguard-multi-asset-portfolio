@@ -1,122 +1,137 @@
-"""Run the classical portfolio optimizers and display the results.
-
-Usage (from the repository root)::
-
-    python scripts/run_classical.py
-
-The script:
-
-1. Builds the synthetic asset universe and saves it to `data/synthetic`.
-2. Solves the continuous and discrete classical models for every investor
-   preset.
-3. Prints an allocation table and a solver-comparison table.
-4. Saves a bar chart of the balanced allocation to `results/`.
-"""
+#!/usr/bin/env python3
+"""Run the complete classical benchmark and create tables and figures."""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
+import yaml
 
-# Make the `src` package importable when run as a script.
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.vanguard_portfolio.classical import PRESETS, SolveResult, solve_continuous, solve_discrete
-from src.vanguard_portfolio.data_generation import generate_synthetic_universe, save_problem
+from vanguard_portfolio.classical import (  # noqa: E402
+    benchmark_solvers,
+    preferences_from_config,
+    solve_continuous,
+    write_benchmark_artifacts,
+)
+from vanguard_portfolio.data_generation import (  # noqa: E402
+    generate_synthetic_universe,
+    load_problem,
+    save_problem,
+)
+from vanguard_portfolio.plotting import generate_benchmark_plots  # noqa: E402
+from vanguard_portfolio.schemas import Preferences  # noqa: E402
 
 
-def _format_weights(names: list[str], w: np.ndarray) -> str:
-    return "  ".join(f"{name}={weight:5.1%}" for name, weight in zip(names, w))
+def _load_config(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    if not isinstance(config, dict):
+        raise ValueError("configuration root must be a mapping")
+    return config
 
 
-def _print_allocation_table(problem, result: SolveResult) -> None:
-    print(f"\nAllocation - {result.method}")
-    print("-" * 60)
-    for name, weight in zip(problem.asset_names, result.weights):
-        bar = "#" * int(round(weight * 40))
-        print(f"  {name:<12} {weight:6.1%} {bar}")
-
-
-def _print_comparison(results: list[SolveResult]) -> None:
-    header = (
-        f"{'method':<16}{'objective':>12}{'return':>9}{'volat.':>9}"
-        f"{'income':>9}{'turnover':>10}{'cost':>9}{'breaches':>10}{'runtime_s':>11}"
+def _print_summary(report) -> None:
+    print("\nClassical solver comparison")
+    print("=" * 104)
+    print(
+        f"{'model':<11} {'method':<27} {'runs':>4} {'feasible':>9} "
+        f"{'best objective':>16} {'gap':>12} {'median s':>11}"
     )
-    print("\nSolver comparison")
-    print("=" * len(header))
-    print(header)
-    print("-" * len(header))
-    for r in results:
-        m = r.metrics
+    print("-" * 104)
+    for row in report.summary_records():
         print(
-            f"{r.method:<16}{r.objective:>12.5f}{m.get('expected_return', float('nan')):>9.2%}"
-            f"{m.get('volatility', float('nan')):>9.2%}{m.get('income', float('nan')):>9.2%}"
-            f"{m.get('turnover', float('nan')):>10.3f}{m.get('transaction_cost', float('nan')):>9.4f}"
-            f"{r.breaches:>10}{r.runtime:>11.4f}"
+            f"{row['model_type']:<11} {row['method']:<27} {row['runs']:>4d} "
+            f"{row['feasible_rate']:>8.0%} {row['best_objective']:>16.9f} "
+            f"{row['absolute_gap_to_reference']:>12.3e} "
+            f"{row['median_runtime_seconds']:>11.6f}"
+        )
+    if report.skipped:
+        print("\nOptional solvers skipped:")
+        for backend, reason in sorted(report.skipped.items()):
+            print(f"  - {backend}: {reason}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=ROOT / "configs/baseline.yaml")
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--strict-optional",
+        action="store_true",
+        help="fail instead of skipping an unavailable OSQP/CVXPY/Gurobi backend",
+    )
+    args = parser.parse_args(argv)
+    config = _load_config(args.config)
+
+    problem_config = config.get("problem", {})
+    source = problem_config.get("source", "synthetic")
+    if source == "synthetic":
+        problem = generate_synthetic_universe()
+    else:
+        candidate = Path(source)
+        if not candidate.is_absolute():
+            candidate = ROOT / candidate
+        problem = load_problem(candidate)
+    save_problem(problem, ROOT / "data/synthetic/synthetic_universe.json")
+
+    preferences = preferences_from_config(config.get("preferences", {}))
+    discrete = config.get("discrete", {})
+    solver_config = config.get("solvers", {})
+    output_config = config.get("outputs", {})
+    output = args.output or ROOT / output_config.get("directory", "results")
+    if not output.is_absolute():
+        output = ROOT / output
+
+    report = benchmark_solvers(
+        problem,
+        preferences,
+        units=int(discrete.get("units", 20)),
+        continuous_backends=solver_config.get("continuous", ["scipy"]),
+        discrete_backends=solver_config.get("discrete", ["enumeration"]),
+        seeds=discrete.get("seeds", [0]),
+        annealing_iterations=int(discrete.get("annealing_iterations", 20_000)),
+        missing_optional="error"
+        if args.strict_optional
+        else solver_config.get("missing_optional", "skip"),
+    )
+    artifacts = write_benchmark_artifacts(report, output)
+
+    sweep_results = None
+    risk_values = None
+    if output_config.get("make_risk_aversion_sweep", False):
+        risk_values = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
+        sweep_results = []
+        for risk in risk_values:
+            sweep_preferences = Preferences(
+                lambda_return=preferences.lambda_return,
+                lambda_risk=risk,
+                lambda_income=preferences.lambda_income,
+                lambda_cost=preferences.lambda_cost,
+            )
+            sweep_results.append(solve_continuous(problem, sweep_preferences, backend="scipy"))
+
+    plots = {}
+    if output_config.get("make_plots", True):
+        plots = generate_benchmark_plots(
+            problem,
+            report,
+            output,
+            sweep_results=sweep_results,
+            risk_values=risk_values,
         )
 
-
-def _save_plot(problem, result: SolveResult, out_dir: Path) -> None:
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("\n(matplotlib not available - skipping chart)")
-        return
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    x = np.arange(problem.n)
-    width = 0.4
-    ax.bar(x - width / 2, problem.w0, width, label="current (w0)", color="#B0BEC5")
-    ax.bar(x + width / 2, result.weights, width, label=result.method, color="#1E88E5")
-    ax.set_xticks(x)
-    ax.set_xticklabels(problem.asset_names, rotation=30, ha="right")
-    ax.set_ylabel("allocation")
-    ax.set_title("Recommended vs current allocation (balanced preset)")
-    ax.legend()
-    fig.tight_layout()
-    path = out_dir / "allocation_balanced.png"
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
-    print(f"\nSaved chart: {path.relative_to(ROOT)}")
-
-
-def main() -> None:
-    problem = generate_synthetic_universe()
-    data_path = save_problem(problem, ROOT / "data/synthetic")
-    print(f"Synthetic universe saved to: {data_path.relative_to(ROOT)}")
-    print(f"Assets: {', '.join(problem.asset_names)}")
-
-    # Detailed view of the balanced preset with both solvers.
-    balanced = PRESETS["balanced"]
-    cont = solve_continuous(problem, balanced)
-    disc = solve_discrete(problem, balanced, units=10)
-
-    _print_allocation_table(problem, cont)
-    _print_allocation_table(problem, disc)
-    print(
-        f"\nContinuous feasible={cont.feasible} | "
-        f"Discrete feasible={disc.feasible} | "
-        f"discrete-vs-continuous L1 distance="
-        f"{np.sum(np.abs(disc.weights - cont.weights)):.4f}"
-    )
-
-    # Compare every investor preset (continuous solver).
-    preset_results: list[SolveResult] = []
-    for name, prefs in PRESETS.items():
-        result = solve_continuous(problem, prefs)
-        result.method = f"cont:{name}"
-        preset_results.append(result)
-    _print_comparison(preset_results)
-
-    _save_plot(problem, cont, ROOT / "results")
+    _print_summary(report)
+    print(f"\nTables/report: {artifacts['report'].relative_to(ROOT)}")
+    if plots:
+        print(f"Graphics: {len(plots)} files in {output.relative_to(ROOT)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
+

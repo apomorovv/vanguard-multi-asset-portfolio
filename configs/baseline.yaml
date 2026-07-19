@@ -1,0 +1,33 @@
+problem:
+  source: synthetic
+
+preferences:
+  preset: balanced
+  lambda_return: 1.0
+  lambda_risk: 5.0
+  lambda_income: 0.0
+  lambda_cost: 1.0
+
+discrete:
+  units: 20
+  seeds: [0, 1, 2, 3, 4]
+  annealing_iterations: 20000
+
+solvers:
+  continuous:
+    - scipy
+    - osqp
+    - cvxpy:CLARABEL
+    - gurobi
+  discrete:
+    - enumeration
+    - local_search
+    - annealing
+    - gurobi
+    - cvxpy:SCIP
+  missing_optional: skip
+
+outputs:
+  directory: results
+  make_plots: true
+  make_risk_aversion_sweep: true
