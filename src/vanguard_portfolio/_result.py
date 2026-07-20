@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from .metrics import portfolio_metrics
-from .portfolio_model import objective_value
+from .portfolio_model import objective_breakdown, objective_value
 from .schemas import PortfolioProblem, Preferences, SolveResult
 from .validation import validate_weights
 
@@ -30,6 +30,7 @@ def make_result(
     weights = np.asarray(weights, dtype=float).reshape(-1)
     report = validate_weights(weights, problem, units=units)
     valid = weights.shape == (problem.n,) and np.all(np.isfinite(weights))
+    terms = objective_breakdown(weights, problem, preferences) if valid else {}
     return SolveResult(
         method=method,
         model_type=model_type,
@@ -42,10 +43,9 @@ def make_result(
         feasible=bool(valid and report.feasible),
         breaches=report.breaches,
         max_violation=report.max_violation,
+        objective_terms=terms,
         metrics=portfolio_metrics(weights, problem) if valid else {},
         metadata=dict(metadata or {}),
         units=units,
         seed=seed,
     )
-
-

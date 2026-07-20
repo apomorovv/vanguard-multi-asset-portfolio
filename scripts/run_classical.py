@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -16,9 +18,11 @@ from vanguard_portfolio.classical import (  # noqa: E402
     benchmark_solvers,
     preferences_from_config,
     solve_continuous,
+    write_artifact_manifest,
     write_benchmark_artifacts,
 )
 from vanguard_portfolio.data_generation import (  # noqa: E402
+    generate_factor_universe,
     generate_synthetic_universe,
     load_problem,
     save_problem,
@@ -56,6 +60,41 @@ def _print_summary(report) -> None:
             print(f"  - {backend}: {reason}")
 
 
+def _build_problem(problem_config: dict):
+    source = str(problem_config.get("source", "synthetic"))
+    if source == "synthetic":
+        problem = generate_synthetic_universe()
+        save_problem(problem, ROOT / "data/synthetic/synthetic_universe.json")
+    elif source == "factor":
+        problem = generate_factor_universe(
+            n_assets=int(problem_config.get("n_assets", 100)),
+            n_groups=int(problem_config.get("n_groups", 5)),
+            n_factors=int(problem_config.get("n_factors", 4)),
+            seed=int(problem_config.get("seed", 0)),
+        )
+    else:
+        candidate = Path(source)
+        if not candidate.is_absolute():
+            candidate = ROOT / candidate
+        problem = load_problem(candidate)
+
+    overrides = dict(problem_config.get("overrides", {}))
+    allowed = {"target_return", "max_turnover"}
+    unknown = set(overrides) - allowed
+    if unknown:
+        raise ValueError(f"unsupported problem override fields: {sorted(unknown)}")
+    if overrides:
+        problem = replace(problem, **overrides)
+    return problem
+
+
+def _display_path(path: Path) -> Path:
+    try:
+        return path.relative_to(ROOT)
+    except ValueError:
+        return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "configs/baseline.yaml")
@@ -69,19 +108,12 @@ def main(argv: list[str] | None = None) -> int:
     config = _load_config(args.config)
 
     problem_config = config.get("problem", {})
-    source = problem_config.get("source", "synthetic")
-    if source == "synthetic":
-        problem = generate_synthetic_universe()
-    else:
-        candidate = Path(source)
-        if not candidate.is_absolute():
-            candidate = ROOT / candidate
-        problem = load_problem(candidate)
-    save_problem(problem, ROOT / "data/synthetic/synthetic_universe.json")
+    problem = _build_problem(problem_config)
 
     preferences = preferences_from_config(config.get("preferences", {}))
     discrete = config.get("discrete", {})
     solver_config = config.get("solvers", {})
+    benchmark_config = config.get("benchmark", {})
     output_config = config.get("outputs", {})
     output = args.output or ROOT / output_config.get("directory", "results")
     if not output.is_absolute():
@@ -98,13 +130,34 @@ def main(argv: list[str] | None = None) -> int:
         missing_optional="error"
         if args.strict_optional
         else solver_config.get("missing_optional", "skip"),
+        require_feasible_results=bool(
+            benchmark_config.get("require_feasible_results", False)
+        ),
+        problem_name=str(problem_config.get("name", problem_config.get("source", "portfolio"))),
     )
-    artifacts = write_benchmark_artifacts(report, output)
+    resolved_config = deepcopy(config)
+    resolved_config["_runtime"] = {
+        "config_path": str(args.config.resolve()),
+        "output_directory": str(output.resolve()),
+        "strict_optional": bool(args.strict_optional),
+        "effective_missing_optional": "error"
+        if args.strict_optional
+        else solver_config.get("missing_optional", "skip"),
+    }
+    artifacts = write_benchmark_artifacts(
+        report,
+        output,
+        resolved_config=resolved_config,
+    )
 
     sweep_results = None
     risk_values = None
     if output_config.get("make_risk_aversion_sweep", False):
-        risk_values = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
+        risk_values = output_config.get(
+            "risk_values", [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
+        )
+        sweep_backend = str(output_config.get("sweep_backend", "scipy"))
+        sweep_options = dict(output_config.get("sweep_options", {}))
         sweep_results = []
         for risk in risk_values:
             sweep_preferences = Preferences(
@@ -113,7 +166,14 @@ def main(argv: list[str] | None = None) -> int:
                 lambda_income=preferences.lambda_income,
                 lambda_cost=preferences.lambda_cost,
             )
-            sweep_results.append(solve_continuous(problem, sweep_preferences, backend="scipy"))
+            sweep_results.append(
+                solve_continuous(
+                    problem,
+                    sweep_preferences,
+                    backend=sweep_backend,
+                    **sweep_options,
+                )
+            )
 
     plots = {}
     if output_config.get("make_plots", True):
@@ -125,13 +185,17 @@ def main(argv: list[str] | None = None) -> int:
             risk_values=risk_values,
         )
 
+    manifest_inputs = {**artifacts, **plots}
+    manifest = write_artifact_manifest(manifest_inputs, output)
+    artifacts["manifest"] = manifest
+
     _print_summary(report)
-    print(f"\nTables/report: {artifacts['report'].relative_to(ROOT)}")
+    print(f"\nTables/report: {_display_path(artifacts['report'])}")
     if plots:
-        print(f"Graphics: {len(plots)} files in {output.relative_to(ROOT)}")
+        print(f"Graphics: {len(plots)} files in {_display_path(output)}")
+    print(f"Manifest: {_display_path(manifest)}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -13,6 +13,64 @@ from typing import Any, Mapping
 import numpy as np
 
 
+def _smallest_symmetric_eigenvalue(matrix: np.ndarray) -> float:
+    """Return the smallest eigenvalue without a full spectrum for large inputs.
+
+    A complete dense eigendecomposition is reliable for small validation
+    instances but becomes an avoidable cubic setup cost for large universes.
+    ARPACK only requests the smallest algebraic eigenvalue for matrices above
+    the cutoff.  A deterministic dense fallback preserves strict validation if
+    the iterative method does not converge.
+    """
+    n = matrix.shape[0]
+    if n <= 384:
+        return float(np.linalg.eigvalsh(matrix)[0])
+
+    try:
+        from scipy.sparse.linalg import (
+            ArpackError,
+            ArpackNoConvergence,
+            LinearOperator,
+            eigsh,
+        )
+
+        operator = LinearOperator(
+            shape=matrix.shape,
+            matvec=lambda vector: matrix @ vector,
+            rmatvec=lambda vector: matrix @ vector,
+            dtype=matrix.dtype,
+        )
+        value = eigsh(
+            operator,
+            k=1,
+            which="SA",
+            return_eigenvectors=False,
+            tol=1e-7,
+            maxiter=max(2_000, 5 * n),
+            v0=np.random.default_rng(0).normal(size=n),
+        )[0]
+        if not np.isfinite(value):
+            raise RuntimeError("iterative PSD validation returned a non-finite eigenvalue")
+        return float(value)
+    except (
+        ArpackError,
+        ArpackNoConvergence,
+        np.linalg.LinAlgError,
+        ValueError,
+        RuntimeError,
+    ):
+        from scipy.linalg import eigh
+
+        return float(
+            eigh(
+                matrix,
+                subset_by_index=[0, 0],
+                check_finite=False,
+                eigvals_only=True,
+            )[0]
+        )
+
+
 class PortfolioError(RuntimeError):
     """Base class for domain-specific portfolio errors."""
 
@@ -23,6 +81,10 @@ class InfeasibleProblemError(PortfolioError):
 
 class SolverUnavailableError(PortfolioError):
     """Raised when an optional solver package or license is unavailable."""
+
+
+class SolverSkippedError(PortfolioError):
+    """Raised when an explicit safety guard intentionally skips a solver."""
 
 
 def _vector(value: Any, length: int, name: str) -> np.ndarray:
@@ -61,6 +123,7 @@ class PortfolioProblem:
     budget: float = 1.0
     target_return: float | None = None
     max_turnover: float | None = None
+    _A: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.asset_names = [str(name) for name in self.asset_names]
@@ -103,7 +166,7 @@ class PortfolioProblem:
             raise ValueError("transaction-cost coefficients c must be nonnegative")
         if not np.allclose(np.diag(self.corr), 1.0, atol=1e-8):
             raise ValueError("corr must have a unit diagonal")
-        if np.min(np.linalg.eigvalsh(self.cov)) < -1e-9:
+        if _smallest_symmetric_eigenvalue(self.cov) < -1e-9:
             raise ValueError("cov must be positive semidefinite")
         expected_cov = self.corr * np.outer(self.sigma, self.sigma)
         if not np.allclose(self.cov, expected_cov, atol=1e-9, rtol=1e-7):
@@ -132,6 +195,9 @@ class PortfolioProblem:
             if not np.isfinite(self.max_turnover) or self.max_turnover < 0:
                 raise ValueError("max_turnover must be finite and nonnegative")
 
+        self._A = np.zeros((g, n), dtype=float)
+        self._A[np.asarray(self.asset_group, dtype=int), np.arange(n)] = 1.0
+
     @property
     def n(self) -> int:
         return len(self.asset_names)
@@ -142,9 +208,7 @@ class PortfolioProblem:
 
     @property
     def A(self) -> np.ndarray:
-        matrix = np.zeros((self.num_groups, self.n), dtype=float)
-        matrix[np.asarray(self.asset_group, dtype=int), np.arange(self.n)] = 1.0
-        return matrix
+        return self._A
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -216,6 +280,9 @@ class SolveResult:
     feasible: bool
     breaches: int
     max_violation: float
+    run_id: str = ""
+    repetition: int = 0
+    objective_terms: dict[str, float] = field(default_factory=dict)
     metrics: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     units: int | None = None
@@ -226,8 +293,10 @@ class SolveResult:
 
     def to_record(self) -> dict[str, Any]:
         record: dict[str, Any] = {
+            "run_id": self.run_id,
             "method": self.method,
             "model_type": self.model_type,
+            "repetition": int(self.repetition),
             "objective": float(self.objective),
             "runtime_seconds": float(self.runtime),
             "status": self.status,
@@ -239,7 +308,6 @@ class SolveResult:
             "units": self.units,
             "seed": self.seed,
         }
+        record.update({key: float(value) for key, value in self.objective_terms.items()})
         record.update({key: float(value) for key, value in self.metrics.items()})
         return record
-
-

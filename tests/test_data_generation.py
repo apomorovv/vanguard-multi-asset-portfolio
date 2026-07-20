@@ -52,8 +52,11 @@ class DataGenerationTests(unittest.TestCase):
         self.assertTrue(is_psd(problem.cov))
         self.assertTrue(validate_weights(problem.w0, problem).feasible)
 
+    def test_large_factor_universe_uses_scalable_validation_path(self) -> None:
+        problem = generate_factor_universe(n_assets=400, n_groups=8, seed=23)
+        self.assertEqual(problem.cov.shape, (400, 400))
+        self.assertTrue(validate_weights(problem.w0, problem).feasible)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

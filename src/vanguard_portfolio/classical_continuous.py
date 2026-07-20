@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from scipy import sparse
 from scipy.optimize import LinearConstraint, linprog, minimize
 
 from ._result import make_result
-from .portfolio_model import build_continuous_qp
+from .portfolio_model import QPData, build_continuous_qp
 from .schemas import (
     InfeasibleProblemError,
     PortfolioProblem,
@@ -24,36 +25,38 @@ from .schemas import (
 )
 
 
-def _linear_program_start(problem: PortfolioProblem, preferences: Preferences) -> np.ndarray:
+def _linear_program_start(problem: PortfolioProblem, data: QPData) -> np.ndarray:
     """Find a feasible ``[w,t]`` point before invoking a QP backend."""
-    data = build_continuous_qp(problem, preferences)
-    matrix = data.A.toarray()
     equal = np.isfinite(data.lower) & np.isfinite(data.upper) & np.isclose(
         data.lower, data.upper, atol=1e-12
     )
-    upper_rows: list[np.ndarray] = []
-    upper_rhs: list[float] = []
-    for i in range(matrix.shape[0]):
-        if equal[i]:
-            continue
-        if np.isfinite(data.upper[i]):
-            upper_rows.append(matrix[i])
-            upper_rhs.append(data.upper[i])
-        if np.isfinite(data.lower[i]):
-            upper_rows.append(-matrix[i])
-            upper_rhs.append(-data.lower[i])
+    inequalities = data.A[~equal].tocsr()
+    inequality_lower = data.lower[~equal]
+    inequality_upper = data.upper[~equal]
+    finite_upper = np.isfinite(inequality_upper)
+    finite_lower = np.isfinite(inequality_lower)
+    upper_rows: list[sparse.spmatrix] = []
+    upper_rhs: list[np.ndarray] = []
+    if np.any(finite_upper):
+        upper_rows.append(inequalities[finite_upper])
+        upper_rhs.append(inequality_upper[finite_upper])
+    if np.any(finite_lower):
+        upper_rows.append(-inequalities[finite_lower])
+        upper_rhs.append(-inequality_lower[finite_lower])
 
     result = linprog(
         np.zeros(2 * problem.n),
-        A_ub=np.vstack(upper_rows) if upper_rows else None,
-        b_ub=np.asarray(upper_rhs) if upper_rhs else None,
-        A_eq=matrix[equal] if np.any(equal) else None,
+        A_ub=sparse.vstack(upper_rows, format="csr") if upper_rows else None,
+        b_ub=np.concatenate(upper_rhs) if upper_rhs else None,
+        A_eq=data.A[equal].tocsr() if np.any(equal) else None,
         b_eq=data.lower[equal] if np.any(equal) else None,
         bounds=[(None, None)] * (2 * problem.n),
         method="highs",
     )
     if not result.success:
-        raise InfeasibleProblemError(f"continuous hard constraints are infeasible: {result.message}")
+        raise InfeasibleProblemError(
+            f"continuous hard constraints are infeasible: {result.message}"
+        )
     return np.asarray(result.x, dtype=float)
 
 
@@ -66,23 +69,31 @@ def solve_continuous_scipy(
     initial_weights: np.ndarray | None = None,
 ) -> SolveResult:
     """Solve the convex QP with SciPy SLSQP and analytic gradients."""
+    total_start = time.perf_counter()
     preferences = preferences or Preferences()
+    build_start = time.perf_counter()
     data = build_continuous_qp(problem, preferences)
+    build_seconds = time.perf_counter() - build_start
     n = problem.n
+    feasible_start_begin = time.perf_counter()
     if initial_weights is None:
-        x0 = _linear_program_start(problem, preferences)
+        x0 = _linear_program_start(problem, data)
     else:
         w0 = np.asarray(initial_weights, dtype=float).reshape(n)
         x0 = np.concatenate([w0, np.abs(w0 - problem.w0)])
-
-    P_full = data.P.toarray()
-    P_full = P_full + np.triu(P_full, 1).T
+    feasible_start_seconds = time.perf_counter() - feasible_start_begin
 
     def objective(x: np.ndarray) -> float:
-        return float(0.5 * x @ P_full @ x + data.q @ x)
+        weights = x[:n]
+        return float(
+            preferences.lambda_risk * weights @ problem.cov @ weights
+            + data.q @ x
+        )
 
     def jacobian(x: np.ndarray) -> np.ndarray:
-        return P_full @ x + data.q
+        gradient = data.q.copy()
+        gradient[:n] += 2.0 * preferences.lambda_risk * (problem.cov @ x[:n])
+        return gradient
 
     equality = np.isfinite(data.lower) & np.isfinite(data.upper) & np.isclose(
         data.lower, data.upper, atol=1e-12
@@ -97,7 +108,7 @@ def solve_continuous_scipy(
             LinearConstraint(data.A[~equality], data.lower[~equality], data.upper[~equality])
         )
 
-    start = time.perf_counter()
+    solve_start = time.perf_counter()
     result = minimize(
         objective,
         x0,
@@ -106,7 +117,8 @@ def solve_continuous_scipy(
         constraints=constraints,
         options={"maxiter": int(max_iter), "ftol": float(tol), "disp": False},
     )
-    runtime = time.perf_counter() - start
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - total_start
     weights = np.asarray(result.x[:n], dtype=float)
     return make_result(
         method="scipy_slsqp",
@@ -121,6 +133,9 @@ def solve_continuous_scipy(
         metadata={
             "iterations": int(getattr(result, "nit", 0)),
             "function_evaluations": int(getattr(result, "nfev", 0)),
+            "model_build_seconds": build_seconds,
+            "feasible_start_seconds": feasible_start_seconds,
+            "solve_seconds": solve_seconds,
         },
     )
 
@@ -138,16 +153,19 @@ def solve_continuous_osqp(
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise SolverUnavailableError("OSQP is not installed; install the 'qp' extra") from exc
 
+    total_start = time.perf_counter()
     preferences = preferences or Preferences()
+    build_start = time.perf_counter()
     data = build_continuous_qp(problem, preferences)
+    build_seconds = time.perf_counter() - build_start
     solver = osqp.OSQP()
-    start = time.perf_counter()
     settings: dict[str, Any] = {
         "verbose": False,
         "eps_abs": float(tol),
         "eps_rel": float(tol),
         "max_iter": int(max_iter),
     }
+    setup_start = time.perf_counter()
     try:
         solver.setup(
             P=data.P,
@@ -169,11 +187,18 @@ def solve_continuous_osqp(
             polish=True,
             **settings,
         )
+    setup_seconds = time.perf_counter() - setup_start
+    solve_start = time.perf_counter()
     solved = solver.solve()
-    runtime = time.perf_counter() - start
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - total_start
     status = str(solved.info.status)
     success = status.lower().startswith("solved") and solved.x is not None
-    weights = np.asarray(solved.x[: problem.n], dtype=float) if success else np.full(problem.n, np.nan)
+    weights = (
+        np.asarray(solved.x[: problem.n], dtype=float)
+        if success
+        else np.full(problem.n, np.nan)
+    )
     return make_result(
         method="osqp",
         model_type="continuous",
@@ -194,6 +219,9 @@ def solve_continuous_osqp(
             "dual_residual": float(
                 getattr(solved.info, "dual_res", getattr(solved.info, "dua_res", np.nan))
             ),
+            "model_build_seconds": build_seconds,
+            "solver_setup_seconds": setup_seconds,
+            "solve_seconds": solve_seconds,
         },
     )
 
@@ -203,6 +231,7 @@ def solve_continuous_cvxpy(
     preferences: Preferences | None = None,
     *,
     solver_name: str = "CLARABEL",
+    solver_options: dict[str, Any] | None = None,
 ) -> SolveResult:
     """Solve with any installed CVXPY-compatible continuous convex solver."""
     try:
@@ -213,7 +242,9 @@ def solve_continuous_cvxpy(
     solver_name = solver_name.upper()
     if solver_name not in cp.installed_solvers():
         raise SolverUnavailableError(f"CVXPY solver {solver_name!r} is not installed")
+    total_start = time.perf_counter()
     preferences = preferences or Preferences()
+    build_start = time.perf_counter()
     n = problem.n
     w = cp.Variable(n, name="w")
     t = cp.Variable(n, nonneg=True, name="t")
@@ -238,12 +269,14 @@ def solve_continuous_cvxpy(
         constraints.append(cp.sum(t) <= problem.max_turnover)
 
     model = cp.Problem(objective, constraints)
-    start = time.perf_counter()
+    build_seconds = time.perf_counter() - build_start
+    solve_start = time.perf_counter()
     try:
-        model.solve(solver=solver_name, verbose=False)
+        model.solve(solver=solver_name, verbose=False, **dict(solver_options or {}))
     except cp.error.SolverError as exc:  # pragma: no cover - solver-specific failure
         raise SolverUnavailableError(f"CVXPY/{solver_name} could not run: {exc}") from exc
-    runtime = time.perf_counter() - start
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - total_start
     success = model.status in {cp.OPTIMAL, cp.OPTIMAL_INACCURATE} and w.value is not None
     weights = np.asarray(w.value).reshape(-1) if success else np.full(n, np.nan)
     stats = model.solver_stats
@@ -262,6 +295,9 @@ def solve_continuous_cvxpy(
             "native_objective": float(model.value) if model.value is not None else None,
             "solver_runtime": getattr(stats, "solve_time", None),
             "iterations": getattr(stats, "num_iters", None),
+            "extra_stats": getattr(stats, "extra_stats", None),
+            "model_build_seconds": build_seconds,
+            "solve_seconds": solve_seconds,
         },
     )
 
@@ -271,6 +307,10 @@ def solve_continuous_gurobi(
     preferences: Preferences | None = None,
     *,
     time_limit: float | None = None,
+    threads: int | None = None,
+    seed: int | None = None,
+    method: int | None = None,
+    bar_conv_tol: float | None = None,
     output: bool = False,
 ) -> SolveResult:
     """Solve the continuous QP directly with optional Gurobi."""
@@ -278,7 +318,9 @@ def solve_continuous_gurobi(
         import gurobipy as gp
         from gurobipy import GRB
     except ImportError as exc:  # pragma: no cover - environment dependent
-        raise SolverUnavailableError("gurobipy is not installed; install the 'gurobi' extra") from exc
+        raise SolverUnavailableError(
+            "gurobipy is not installed; install the 'gurobi' extra"
+        ) from exc
 
     preferences = preferences or Preferences()
     n = problem.n
@@ -288,6 +330,14 @@ def solve_continuous_gurobi(
         model.Params.OutputFlag = int(output)
         if time_limit is not None:
             model.Params.TimeLimit = float(time_limit)
+        if threads is not None:
+            model.Params.Threads = int(threads)
+        if seed is not None:
+            model.Params.Seed = int(seed)
+        if method is not None:
+            model.Params.Method = int(method)
+        if bar_conv_tol is not None:
+            model.Params.BarConvTol = float(bar_conv_tol)
         w = model.addMVar(n, lb=problem.lower, ub=problem.upper, name="w")
         t = model.addMVar(n, lb=0.0, name="t")
         model.addConstr(w.sum() == problem.budget, name="budget")
@@ -306,9 +356,12 @@ def solve_continuous_gurobi(
             + preferences.lambda_cost * (problem.c @ t),
             GRB.MINIMIZE,
         )
+        build_seconds = time.perf_counter() - start
+        solve_start = time.perf_counter()
         model.optimize()
     except gp.GurobiError as exc:  # license and environment failures land here
         raise SolverUnavailableError(f"Gurobi could not start or solve: {exc}") from exc
+    solve_seconds = time.perf_counter() - solve_start
     runtime = time.perf_counter() - start
     success = model.SolCount > 0
     optimal = model.Status == GRB.OPTIMAL
@@ -320,6 +373,18 @@ def solve_continuous_gurobi(
         GRB.TIME_LIMIT: "time_limit",
         GRB.SUBOPTIMAL: "suboptimal",
     }
+    metadata: dict[str, Any] = {
+        "native_objective": float(model.ObjVal) if success else None,
+        "solver_runtime": float(model.Runtime),
+        "iterations": float(model.IterCount),
+        "model_build_seconds": build_seconds,
+        "solve_seconds": solve_seconds,
+    }
+    if success:
+        try:
+            metadata["best_bound"] = float(model.ObjBound)
+        except gp.GurobiError:
+            pass
     return make_result(
         method="gurobi_qp",
         model_type="continuous",
@@ -330,11 +395,8 @@ def solve_continuous_gurobi(
         status=status_names.get(model.Status, f"status_{model.Status}"),
         success=success,
         optimal=optimal,
-        metadata={
-            "native_objective": float(model.ObjVal) if success else None,
-            "solver_runtime": float(model.Runtime),
-            "iterations": float(model.IterCount),
-        },
+        seed=seed,
+        metadata=metadata,
     )
 
 
@@ -392,4 +454,3 @@ __all__ = [
     "solve_continuous_osqp",
     "solve_continuous_scipy",
 ]
-

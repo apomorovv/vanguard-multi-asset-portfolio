@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vanguard-multi-asset-portfolio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Auditable classical and quantum-ready baselines for multi-asset portfolio construction"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,12 +18,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-qp = ["osqp>=0.6.3", "cvxpy>=1.4"]
+qp = ["osqp>=0.6.3", "cvxpy>=1.4", "clarabel>=0.9"]
+mip = ["cvxpy>=1.4", "pyscipopt>=5.0"]
 gurobi = ["gurobipy>=11.0"]
+all-solvers = [
+  "osqp>=0.6.3",
+  "cvxpy>=1.4",
+  "clarabel>=0.9",
+  "pyscipopt>=5.0",
+  "gurobipy>=11.0",
+]
 test = ["pytest>=8.0", "pytest-cov>=5.0"]
 dev = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
+  "clarabel>=0.9",
   "pytest>=8.0",
   "pytest-cov>=5.0",
   "ruff>=0.6",
@@ -46,4 +55,3 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-

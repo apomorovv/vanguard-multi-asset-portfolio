@@ -12,6 +12,7 @@ from vanguard_portfolio.portfolio_model import (
     lots_to_weights,
     objective_breakdown,
     objective_value,
+    swap_objective_delta,
 )
 from vanguard_portfolio.schemas import Preferences
 
@@ -57,8 +58,32 @@ class PortfolioModelTests(unittest.TestCase):
         self.assertAlmostEqual(float(weights.sum()), self.problem.budget)
         self.assertTrue(discrete_constraints_hold(lots, self.problem, units=10))
 
+    def test_fast_swap_delta_matches_full_objective(self) -> None:
+        lots = np.array([2, 1, 2, 2, 0, 3])
+        weights = lots_to_weights(lots, self.problem, units=10)
+        donor, receiver = 5, 0
+        delta = swap_objective_delta(
+            weights,
+            self.problem.cov @ weights,
+            donor,
+            receiver,
+            self.problem,
+            self.preferences,
+            units=10,
+        )
+        trial = lots.copy()
+        trial[donor] -= 1
+        trial[receiver] += 1
+        exact_delta = (
+            objective_value(
+                lots_to_weights(trial, self.problem, units=10),
+                self.problem,
+                self.preferences,
+            )
+            - objective_value(weights, self.problem, self.preferences)
+        )
+        self.assertAlmostEqual(delta, exact_delta, places=14)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

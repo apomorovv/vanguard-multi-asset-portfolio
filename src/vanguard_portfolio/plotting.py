@@ -46,16 +46,32 @@ def plot_allocations(
     path: str | Path,
 ) -> Path:
     selected = _best_by_method(results)
-    x = np.arange(problem.n)
     series = [("current", problem.w0)] + [(result.method, result.weights) for result in selected]
+    max_assets = 30
+    if problem.n > max_assets:
+        stacked = np.vstack([values for _, values in series])
+        importance = np.max(stacked, axis=0)
+        chosen = np.argsort(importance)[-max_assets:]
+        chosen = chosen[np.argsort(importance[chosen])[::-1]]
+        labels = [problem.asset_names[index] for index in chosen] + ["Other assets"]
+        compact_series = []
+        for label, values in series:
+            displayed = values[chosen]
+            other = float(np.sum(values) - np.sum(displayed))
+            compact_series.append((label, np.concatenate((displayed, [other]))))
+        series = compact_series
+    else:
+        labels = list(problem.asset_names)
+
+    x = np.arange(len(labels))
     width = min(0.8 / len(series), 0.22)
-    fig, ax = plt.subplots(figsize=(max(9.0, problem.n * 1.25), 5.2))
+    fig, ax = plt.subplots(figsize=(min(16.0, max(9.0, len(labels) * 0.48)), 5.4))
     offsets = (np.arange(len(series)) - (len(series) - 1) / 2) * width
     for j, ((label, values), offset) in enumerate(zip(series, offsets)):
         color = "#AAB2BD" if j == 0 else COLORS[(j - 1) % len(COLORS)]
         ax.bar(x + offset, values, width, label=label.replace("_", " "), color=color)
     ax.set_xticks(x)
-    ax.set_xticklabels(problem.asset_names, rotation=28, ha="right")
+    ax.set_xticklabels(labels, rotation=35, ha="right")
     ax.set_ylabel("Portfolio weight")
     ax.set_title("Current and optimized allocations")
     ax.set_ylim(bottom=0)
@@ -86,7 +102,10 @@ def plot_risk_return(results: Iterable[SolveResult], path: str | Path) -> Path:
     # allocation), but otherwise look like a missing series. Label those groups.
     locations: dict[tuple[float, float], set[str]] = {}
     for result in selected:
-        key = (round(result.metrics["volatility"], 10), round(result.metrics["expected_return"], 10))
+        key = (
+            round(result.metrics["volatility"], 10),
+            round(result.metrics["expected_return"], 10),
+        )
         locations.setdefault(key, set()).add(result.method)
     for (volatility_value, return_value), coincident in locations.items():
         if len(coincident) > 1:
@@ -137,7 +156,13 @@ def plot_objective_gap(report: BenchmarkReport, path: str | Path) -> Path:
     labels = [
         f"{row['model_type'][0].upper()}: {row['method'].replace('_', ' ')}" for row in summary
     ]
-    gaps = np.asarray([max(float(row["absolute_gap_to_reference"]), 0.0) for row in summary])
+    gap_values = []
+    for row in summary:
+        value = float(row["absolute_gap_to_reference"])
+        if not np.isfinite(value):
+            value = float(row["absolute_gap_to_certified_bound"])
+        gap_values.append(max(value, 0.0) if np.isfinite(value) else np.nan)
+    gaps = np.asarray(gap_values)
     x = np.arange(len(summary))
     fig, ax = plt.subplots(figsize=(max(8.0, len(summary) * 1.15), 4.8))
     ax.bar(x, gaps, color=[COLORS[i % len(COLORS)] for i in x])
@@ -145,10 +170,15 @@ def plot_objective_gap(report: BenchmarkReport, path: str | Path) -> Path:
     ax.axhline(0, color="#333333", linewidth=0.8)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=30, ha="right")
-    ax.set_ylabel("Best objective - reference objective")
-    ax.set_title("Optimality gap within each model class")
+    ax.set_ylabel("Best objective - optimal reference / certified lower bound")
+    ax.set_title("Certified objective gap within each model class")
     ax.grid(axis="y", alpha=0.25)
-    if gaps.size and np.max(np.abs(gaps)) < 1e-12:
+    finite_gaps = gaps[np.isfinite(gaps)]
+    if (
+        finite_gaps.size == gaps.size
+        and finite_gaps.size
+        and np.max(np.abs(finite_gaps)) < 1e-12
+    ):
         ax.set_ylim(-0.1, 1.0)
         ax.set_yticks([0.0])
         ax.text(
@@ -169,10 +199,15 @@ def plot_objective_gap(report: BenchmarkReport, path: str | Path) -> Path:
 def plot_correlation(problem: PortfolioProblem, path: str | Path) -> Path:
     fig, ax = plt.subplots(figsize=(7.0, 6.0))
     image = ax.imshow(problem.corr, cmap="RdBu_r", vmin=-1, vmax=1)
-    ax.set_xticks(np.arange(problem.n))
-    ax.set_yticks(np.arange(problem.n))
-    ax.set_xticklabels(problem.asset_names, rotation=40, ha="right")
-    ax.set_yticklabels(problem.asset_names)
+    if problem.n <= 60:
+        ax.set_xticks(np.arange(problem.n))
+        ax.set_yticks(np.arange(problem.n))
+        ax.set_xticklabels(problem.asset_names, rotation=40, ha="right")
+        ax.set_yticklabels(problem.asset_names)
+    else:
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlabel(f"{problem.n} assets (labels hidden for readability)")
     ax.set_title("Asset return correlation")
     fig.colorbar(image, ax=ax, label="Correlation", shrink=0.85)
     fig.tight_layout()
@@ -188,6 +223,11 @@ def plot_constraint_slacks(
     # Budget is an equality and always has zero signed slack; the remaining
     # inequalities show distance to their nearest hard boundary.
     items = [(name, value) for name, value in slacks.items() if name != "budget"]
+    max_constraints = 50
+    if len(items) > max_constraints:
+        # Negative and smallest positive slacks are the violations/binding
+        # limits that matter.  Avoid a multi-hundred-inch figure for large n.
+        items = sorted(items, key=lambda item: item[1])[:max_constraints]
     labels = [name.replace("_", " ") for name, _ in items]
     values = np.asarray([value for _, value in items])
     y = np.arange(len(items))
@@ -250,7 +290,9 @@ def generate_benchmark_plots(
     destination.mkdir(parents=True, exist_ok=True)
     successful = [result for result in report.results if result.success and result.feasible]
     paths = {
-        "allocations": plot_allocations(problem, successful, destination / "allocation_comparison.png"),
+        "allocations": plot_allocations(
+            problem, successful, destination / "allocation_comparison.png"
+        ),
         "risk_return": plot_risk_return(successful, destination / "risk_return.png"),
         "runtime": plot_runtime(report, destination / "runtime_comparison.png"),
         "objective_gap": plot_objective_gap(report, destination / "objective_gap.png"),
@@ -282,4 +324,3 @@ __all__ = [
     "plot_risk_return",
     "plot_runtime",
 ]
-

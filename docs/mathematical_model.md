@@ -188,4 +188,3 @@ The baseline does not claim to model taxes, market impact, nonlinear fees,
 multi-period wealth dynamics, tail risk, scenario constraints, liabilities, or
 short selling. Those extensions require new data and equations and must not be
 silently folded into the current objective.
-

@@ -63,6 +63,11 @@ For each preference configuration:
 - all stochastic raw runs are retained;
 - runtime comparisons identify the machine/environment separately when used in
   a paper or presentation.
+- each run has a unique `run_id` shared by run, allocation, constraint, and
+  diagnostic artifacts;
+- exact solver options and repetitions are retained in `resolved_config.yaml`;
+- exact problem bytes are represented by a SHA-256 fingerprint;
+- every generated artifact is listed with its size and SHA-256 checksum.
 
 ## Gate 6: graphics
 
@@ -78,6 +83,23 @@ Each benchmark run must produce and visually inspect:
 
 Plots are explanatory outputs. CSV/JSON results remain the auditable source.
 
+For large universes, allocation plots show the 30 largest assets plus an
+aggregate remainder, correlation tick labels are hidden above 60 assets, and
+constraint plots show the 50 most binding/violated limits. No information is
+discarded from `allocation_weights.csv` or `constraint_checks.csv`.
+
+## Gate 7: large-instance safety
+
+- enumeration must remain below its configured candidate-count guard;
+- large heuristic starts must be found and validated without recursive
+  enumeration;
+- finite candidate-pool local search must not be described as a complete
+  one-swap optimum;
+- time-limited MIQP runs must preserve incumbent, best bound, and gap when
+  available;
+- all accepted large-instance results must pass the same unmodified-weight
+  validation used for tiny tests.
+
 ## Test commands
 
 ```bash
@@ -87,5 +109,3 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 Optional solver tests may skip only for a clearly reported missing package or
 license. A backend that runs and produces the wrong objective must fail.
-
-

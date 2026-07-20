@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
 from vanguard_portfolio.classical_continuous import solve_continuous_scipy
 from vanguard_portfolio.classical_discrete import (
+    bounded_lot_allocation_count,
     solve_discrete_annealing,
     solve_discrete_cvxpy,
     solve_discrete_enumeration,
@@ -14,6 +16,7 @@ from vanguard_portfolio.classical_discrete import (
 )
 from vanguard_portfolio.data_generation import generate_synthetic_universe
 from vanguard_portfolio.schemas import SolverUnavailableError
+from vanguard_portfolio.schemas import SolverSkippedError
 
 
 class DiscreteSolverTests(unittest.TestCase):
@@ -47,6 +50,30 @@ class DiscreteSolverTests(unittest.TestCase):
         np.testing.assert_array_equal(first.weights, second.weights)
         self.assertAlmostEqual(first.objective, second.objective)
 
+    def test_enumeration_guard_rejects_unsafe_search(self) -> None:
+        self.assertGreater(bounded_lot_allocation_count(self.problem, units=10), 100)
+        with self.assertRaises(SolverSkippedError):
+            solve_discrete_enumeration(self.problem, units=10, max_candidates=100)
+
+    def test_candidate_pool_local_search_remains_feasible(self) -> None:
+        result = solve_discrete_local_search(
+            self.problem,
+            units=20,
+            max_iterations=20,
+            candidate_pool_size=3,
+        )
+        self.assertTrue(result.success, result.status)
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.metadata["candidate_pool_size"], 3)
+
+    def test_large_safe_feasible_start_honors_optional_guardrails(self) -> None:
+        guarded = replace(self.problem, target_return=0.035, max_turnover=0.60)
+        result = solve_discrete_local_search(guarded, units=20, max_iterations=25)
+        self.assertTrue(result.feasible, result.status)
+        self.assertGreaterEqual(result.metrics["expected_return"], 0.035 - 1e-7)
+        self.assertLessEqual(result.metrics["turnover"], 0.60 + 1e-7)
+        self.assertEqual(result.metadata["feasible_start_method"], "scipy_highs_milp")
+
     def test_gurobi_miqp_matches_enumeration_when_available(self) -> None:
         exact = solve_discrete_enumeration(self.problem, units=10)
         try:
@@ -68,5 +95,3 @@ class DiscreteSolverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

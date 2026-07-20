@@ -29,6 +29,10 @@ class ContinuousSolverTests(unittest.TestCase):
             result.objective,
             objective_value(self.problem.w0, self.problem, preferences) + 1e-9,
         )
+        self.assertIn("model_build_seconds", result.metadata)
+        self.assertIn("feasible_start_seconds", result.metadata)
+        self.assertIn("solve_seconds", result.metadata)
+        self.assertGreaterEqual(result.runtime, result.metadata["solve_seconds"])
 
     def test_higher_risk_weight_reduces_variance(self) -> None:
         low = solve_continuous_scipy(self.problem, Preferences(lambda_risk=1.0))
@@ -87,4 +91,3 @@ class ContinuousSolverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -86,10 +86,13 @@ def build_continuous_qp(
     n = problem.n
     dim = 2 * n
 
-    values, vectors = np.linalg.eigh(problem.cov)
-    cov_psd = (vectors * np.maximum(values, 0.0)) @ vectors.T
-    P = np.zeros((dim, dim), dtype=float)
-    P[:n, :n] = 2.0 * preferences.lambda_risk * cov_psd
+    # PortfolioProblem has already validated symmetry and PSD.  Repeating a
+    # dense eigendecomposition here would add O(n^3) work for every backend.
+    # Build the solver matrix directly without allocating a dense 2n-by-2n
+    # block containing mostly zeros.
+    risk_block = sparse.csc_matrix(2.0 * preferences.lambda_risk * problem.cov)
+    zero_block = sparse.csc_matrix((n, n), dtype=float)
+    P = sparse.block_diag((risk_block, zero_block), format="csc")
     q = np.concatenate(
         [
             -preferences.lambda_return * problem.mu
@@ -98,66 +101,145 @@ def build_continuous_qp(
         ]
     )
 
-    rows: list[np.ndarray] = []
-    lows: list[float] = []
-    highs: list[float] = []
+    blocks: list[sparse.spmatrix] = []
+    lows: list[np.ndarray] = []
+    highs: list[np.ndarray] = []
     names: list[str] = []
 
-    def add(row: np.ndarray, low: float, high: float, name: str) -> None:
-        rows.append(np.asarray(row, dtype=float))
-        lows.append(float(low))
-        highs.append(float(high))
-        names.append(name)
+    def add_block(
+        matrix: sparse.spmatrix,
+        low: np.ndarray | float,
+        high: np.ndarray | float,
+        row_names: list[str],
+    ) -> None:
+        rows = matrix.shape[0]
+        blocks.append(matrix.tocsr())
+        lows.append(np.broadcast_to(np.asarray(low, dtype=float), (rows,)).copy())
+        highs.append(np.broadcast_to(np.asarray(high, dtype=float), (rows,)).copy())
+        names.extend(row_names)
 
-    for i, asset in enumerate(problem.asset_names):
-        row = np.zeros(dim)
-        row[i] = 1.0
-        add(row, problem.lower[i], problem.upper[i], f"asset:{asset}")
-    for i, asset in enumerate(problem.asset_names):
-        row = np.zeros(dim)
-        row[n + i] = 1.0
-        add(row, 0.0, np.inf, f"turnover_aux:{asset}")
+    identity = sparse.eye(n, format="csr")
+    zeros = sparse.csr_matrix((n, n), dtype=float)
+    add_block(
+        sparse.hstack((identity, zeros), format="csr"),
+        problem.lower,
+        problem.upper,
+        [f"asset:{asset}" for asset in problem.asset_names],
+    )
+    add_block(
+        sparse.hstack((zeros, identity), format="csr"),
+        0.0,
+        np.inf,
+        [f"turnover_aux:{asset}" for asset in problem.asset_names],
+    )
 
-    budget = np.concatenate([np.ones(n), np.zeros(n)])
-    add(budget, problem.budget, problem.budget, "budget")
+    budget = sparse.csr_matrix(
+        (np.ones(n), (np.zeros(n, dtype=int), np.arange(n))), shape=(1, dim)
+    )
+    add_block(budget, problem.budget, problem.budget, ["budget"])
 
-    for g, group in enumerate(problem.group_names):
-        row = np.concatenate([problem.A[g], np.zeros(n)])
-        add(row, problem.group_lower[g], problem.group_upper[g], f"group:{group}")
+    group_matrix = sparse.hstack(
+        (sparse.csr_matrix(problem.A), sparse.csr_matrix((problem.num_groups, n))),
+        format="csr",
+    )
+    add_block(
+        group_matrix,
+        problem.group_lower,
+        problem.group_upper,
+        [f"group:{group}" for group in problem.group_names],
+    )
 
-    for i, asset in enumerate(problem.asset_names):
-        row = np.zeros(dim)
-        row[i] = -1.0
-        row[n + i] = 1.0
-        add(row, -problem.w0[i], np.inf, f"abs_plus:{asset}")
-
-        row = np.zeros(dim)
-        row[i] = 1.0
-        row[n + i] = 1.0
-        add(row, problem.w0[i], np.inf, f"abs_minus:{asset}")
+    add_block(
+        sparse.hstack((-identity, identity), format="csr"),
+        -problem.w0,
+        np.inf,
+        [f"abs_plus:{asset}" for asset in problem.asset_names],
+    )
+    add_block(
+        sparse.hstack((identity, identity), format="csr"),
+        problem.w0,
+        np.inf,
+        [f"abs_minus:{asset}" for asset in problem.asset_names],
+    )
 
     if problem.target_return is not None:
-        add(
-            np.concatenate([problem.mu, np.zeros(n)]),
+        add_block(
+            sparse.csr_matrix(np.concatenate([problem.mu, np.zeros(n)])[None, :]),
             problem.target_return,
             np.inf,
-            "target_return",
+            ["target_return"],
         )
     if problem.max_turnover is not None:
-        add(
-            np.concatenate([np.zeros(n), np.ones(n)]),
+        add_block(
+            sparse.csr_matrix(np.concatenate([np.zeros(n), np.ones(n)])[None, :]),
             -np.inf,
             problem.max_turnover,
-            "max_turnover",
+            ["max_turnover"],
         )
 
     return QPData(
-        P=sparse.csc_matrix(np.triu(P)),
+        P=sparse.triu(P, format="csc"),
         q=q,
-        A=sparse.csc_matrix(np.vstack(rows)),
-        lower=np.asarray(lows),
-        upper=np.asarray(highs),
+        A=sparse.vstack(blocks, format="csc"),
+        lower=np.concatenate(lows),
+        upper=np.concatenate(highs),
         row_names=tuple(names),
+    )
+
+
+def swap_objective_delta(
+    weights: np.ndarray,
+    cov_times_weights: np.ndarray,
+    donor: int,
+    receiver: int,
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    units: int,
+) -> float:
+    """Exact objective change for moving one lot from donor to receiver.
+
+    The calculation is O(1) once ``cov_times_weights = cov @ weights`` is
+    available.  This avoids an O(n^2) quadratic-form evaluation for every
+    local-search or annealing proposal.
+    """
+    if donor == receiver:
+        return 0.0
+    w = np.asarray(weights, dtype=float)
+    cov_w = np.asarray(cov_times_weights, dtype=float)
+    lot_size = problem.budget / int(units)
+
+    variance_delta = (
+        2.0 * lot_size * (cov_w[receiver] - cov_w[donor])
+        + lot_size**2
+        * (
+            problem.cov[receiver, receiver]
+            + problem.cov[donor, donor]
+            - 2.0 * problem.cov[donor, receiver]
+        )
+    )
+    linear_delta = (
+        -preferences.lambda_return
+        * lot_size
+        * (problem.mu[receiver] - problem.mu[donor])
+        - preferences.lambda_income
+        * lot_size
+        * (problem.y[receiver] - problem.y[donor])
+    )
+
+    before_cost = (
+        problem.c[donor] * abs(w[donor] - problem.w0[donor])
+        + problem.c[receiver] * abs(w[receiver] - problem.w0[receiver])
+    )
+    after_cost = (
+        problem.c[donor]
+        * abs(w[donor] - lot_size - problem.w0[donor])
+        + problem.c[receiver]
+        * abs(w[receiver] + lot_size - problem.w0[receiver])
+    )
+    return float(
+        preferences.lambda_risk * variance_delta
+        + linear_delta
+        + preferences.lambda_cost * (after_cost - before_cost)
     )
 
 
@@ -217,8 +299,7 @@ __all__ = [
     "objective_value",
     "transaction_cost",
     "turnover",
+    "swap_objective_delta",
     "variance",
     "volatility",
 ]
-
-

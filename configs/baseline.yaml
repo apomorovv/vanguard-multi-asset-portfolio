@@ -1,5 +1,6 @@
 problem:
   source: synthetic
+  name: six_asset_exact_validation
 
 preferences:
   preset: balanced
@@ -15,19 +16,63 @@ discrete:
 
 solvers:
   continuous:
-    - scipy
-    - osqp
-    - cvxpy:CLARABEL
-    - gurobi
+    - name: scipy
+      repetitions: 3
+      options:
+        tol: 1.0e-9
+        max_iter: 5000
+    - name: osqp
+      repetitions: 3
+      options:
+        tol: 1.0e-8
+        max_iter: 200000
+    - name: cvxpy:CLARABEL
+      repetitions: 3
+      options:
+        solver_options:
+          tol_gap_abs: 1.0e-9
+          tol_feas: 1.0e-9
+    - name: gurobi
+      repetitions: 3
+      options:
+        time_limit: 300
+        threads: 0
+        seed: 0
+        bar_conv_tol: 1.0e-10
   discrete:
-    - enumeration
-    - local_search
-    - annealing
-    - gurobi
-    - cvxpy:SCIP
-  missing_optional: skip
+    - name: enumeration
+      options:
+        max_candidates: 2000000
+    - name: local_search
+      options:
+        max_iterations: 1000
+    - name: annealing
+      options:
+        initial_temperature: 0.02
+        final_temperature: 1.0e-5
+        local_polish: true
+    - name: gurobi
+      options:
+        time_limit: 300
+        mip_gap: 1.0e-9
+        threads: 0
+        seed: 0
+    - name: cvxpy:SCIP
+      options:
+        solver_options:
+          scip_params:
+            limits/time: 300
+            limits/gap: 1.0e-9
+  missing_optional: error
+
+benchmark:
+  require_feasible_results: true
 
 outputs:
   directory: results
   make_plots: true
   make_risk_aversion_sweep: true
+  sweep_backend: osqp
+  sweep_options:
+    tol: 1.0e-8
+    max_iter: 200000

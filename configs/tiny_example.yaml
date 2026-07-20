@@ -1,5 +1,6 @@
 problem:
   source: synthetic
+  name: quick_smoke_test
 
 preferences:
   preset: balanced
@@ -15,12 +16,17 @@ discrete:
 
 solvers:
   continuous: [scipy]
-  discrete: [enumeration, local_search, annealing]
+  discrete:
+    - name: enumeration
+      options: {max_candidates: 100000}
+    - local_search
+    - annealing
   missing_optional: skip
+
+benchmark:
+  require_feasible_results: true
 
 outputs:
   directory: results
   make_plots: true
   make_risk_aversion_sweep: false
-
-

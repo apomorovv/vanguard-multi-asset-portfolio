@@ -123,6 +123,53 @@ For larger instances:
 - otherwise report incumbent and bound/gap, plus identically budgeted heuristic
   controls.
 
+The implementation enforces this distinction mechanically. Before enumeration,
+an O(nM) dynamic program counts budget/asset-bound-feasible lot vectors. A
+configured `max_candidates` guard rejects an unsafe exact search before
+recursive enumeration starts.
+
+Continuous QP matrices are assembled from sparse blocks. Covariance PSD is
+validated once when `PortfolioProblem` is constructed and is not recomputed for
+every backend. The SciPy feasible-start LP also consumes sparse constraints.
+
+For discrete heuristics, a zero-objective SciPy/HiGHS MILP finds a hard-feasible
+lot start. A cached `cov @ weights` vector makes the exact one-lot objective
+delta O(1) per proposal and O(n) per accepted cache update. Large local-search
+runs may set `candidate_pool_size`; finite pools are heuristics and are reported
+as `candidate_pool_stationary`, never as a full one-swap certificate.
+
+## Repeated runs and timing phases
+
+Detailed solver specifications may request independent `repetitions`. Each run
+gets a unique `run_id`. Common wall-clock runtime includes model construction,
+feasible-start work, solver setup, and execution. Native timing phases are also
+preserved separately when available:
+
+- `model_build_seconds`;
+- `feasible_start_seconds`;
+- `solver_setup_seconds`;
+- `solve_seconds`;
+- native solver runtime.
+
+Time-limited MIQP incumbents remain usable only when independent validation
+passes. They are not labeled optimal. Native best bound, node count, and MIP gap
+are retained in `solver_diagnostics.json`.
+
+## Auditable output contract
+
+Every normal run persists:
+
+- exact weights and discrete lots in `allocation_weights.csv`;
+- objective components and financial metrics in `benchmark_runs.csv`;
+- every constraint lhs/rhs/slack/violation in `constraint_checks.csv`;
+- nested backend diagnostics in `solver_diagnostics.json`;
+- exact input data in `problem.json`;
+- exact run controls in `resolved_config.yaml`;
+- platform and package versions in `benchmark_metadata.json`;
+- file sizes and SHA-256 hashes in `artifact_manifest.json`.
+
+This removes any need to infer numeric allocations from plots.
+
 ## Primary solver documentation
 
 - [OSQP problem form and documentation](https://osqp.org/docs/)
@@ -130,4 +177,3 @@ For larger instances:
 - [Gurobi Python API model classes](https://docs.gurobi.com/projects/optimizer/en/current/reference/python/overview.html)
 - [Gurobi quadratic objectives](https://docs.gurobi.com/projects/optimizer/en/current/concepts/modeling/objectives.html)
 - [Gurobi model attributes, including bounds and gaps](https://docs.gurobi.com/projects/optimizer/en/current/reference/attributes/model.html)
-

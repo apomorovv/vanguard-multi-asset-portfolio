@@ -104,7 +104,11 @@ def generate_factor_universe(
     raw_sigma = np.sqrt(np.diag(raw_cov))
     desired_sigma = rng.uniform(0.05, 0.22, size=n_assets)
     corr = raw_cov / np.outer(raw_sigma, raw_sigma)
-    corr = nearest_correlation(corr)
+    # BB' + D is positive definite by construction, and positive diagonal
+    # scaling preserves PSD.  A full eigen-projection here used to impose an
+    # unnecessary O(n^3) cost on every large generated universe.
+    corr = 0.5 * (corr + corr.T)
+    np.fill_diagonal(corr, 1.0)
     cov = corr * np.outer(desired_sigma, desired_sigma)
 
     w0 = np.full(n_assets, 1.0 / n_assets)
@@ -155,4 +159,3 @@ __all__ = [
     "nearest_correlation",
     "save_problem",
 ]
-
