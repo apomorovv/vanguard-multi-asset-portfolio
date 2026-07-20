@@ -1,10 +1,10 @@
 # Vanguard Multi-Asset Portfolio Classical Baseline
 
-This repository provides an auditable classical reference for the WISER
-Vanguard multi-asset portfolio challenge. Version 0.3 supports exact small
-validation and safe large-instance experiments through one canonical objective,
-one problem schema, independent feasibility checks, repeated solver runs,
-complete allocation/diagnostic persistence, and large-safe graphics.
+This repository provides a Vanguard multi-asset portfolio challenge. 
+Version 0.3 supports exact small validation and safe large-instance experiments 
+through one canonical objective, one problem schema, independent feasibility 
+checks, repeated solver runs, complete allocation/diagnostic persistence, 
+and large-safe graphics.
 
 ## What is implemented
 
