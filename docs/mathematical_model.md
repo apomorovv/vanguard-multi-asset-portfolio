@@ -1,487 +1,190 @@
 # Multi-Asset Portfolio Construction Model
 
-## 1. Purpose
-
-The optimization problem recommends a target allocation across multiple asset classes. The portfolio should balance expected return, risk, income, and implementation cost while satisfying all mandatory investment guardrails.
-
-The same financial model will be solved using:
-
-1. A continuous classical optimizer.
-2. A discrete classical optimizer.
-3. A QUBO-compatible binary optimizer.
-4. A quantum or quantum-inspired optimizer.
-
-This separation ensures that differences between solutions arise from the optimization algorithms rather than from inconsistent problem definitions.
-
----
-
-## 2. Sets
-
-Let
-
-$$
-\mathcal A={1,\ldots,n}
-$$
-
-be the set of asset classes.
-
-Example asset classes include:
-
-* US equity
-* International equity
-* Government bonds
-* Corporate bonds
-* Commodities
-* Cash
-
-Let
-
-$$
-\mathcal G={1,\ldots,G}
-$$
-
-be the set of asset groups, such as equity, fixed income, alternatives, and cash.
-
----
-
-## 3. Input parameters
-
-For every asset $$(i\in\mathcal A)$$
-define:
-
-$$
-\mu_i
-$$
-
-as the annual expected return,
-
-$$
-\sigma_i
-$$
-
-
-as the annual volatility,
-
-$$
-c_i
-$$
-
-as the transaction-cost coefficient,
-
-$$
-y_i
-$$
-
-as the annual income yield,
-
-$$
-w_i^{(0)}
-$$
-
-as the current portfolio allocation,
-
-$$
-l_i
-$$
-
-as the minimum permitted allocation, and
-
-$$
-u_i
-$$
-
-as the maximum permitted allocation.
-
-Let
-
-$$
-\Sigma\in\mathbb R^{n\times n}
-$$
-
-be the annual covariance matrix of asset returns.
-
-The covariance matrix is related to volatility and correlation by
-
-$$
-\Sigma_{ij}=\rho_{ij}\sigma_i\sigma_j.
-$$
-
-For each group (g), define
-
-$$
-a_{gi}=
-\begin{cases}
-1,&\text{if asset }i\text{ belongs to group }g,\
-0,&\text{otherwise},
-\end{cases}
-$$
-
-and group allocation limits
-
-$$
-L_g,\qquad U_g.
-$$
-
----
-
-## 4. Continuous decision variables
-
-Let
-
-$$
-w_i\in\mathbb R
-$$
-
-be the target allocation to asset (i).
-
-Let
-
-$$
-t_i\geq 0
-$$
-
-represent the absolute allocation change for asset (i).
-
-The vector of target allocations is
-
-$$
-\mathbf w=(w_1,\ldots,w_n)^T.
-$$
-
----
-
-## 5. Portfolio quantities
-
-### Expected return
-
-$$
-R(\mathbf w)=\boldsymbol{\mu}^T\mathbf w.
-$$
-
-### Variance
-
-$$
-V(\mathbf w)=\mathbf w^T\Sigma\mathbf w.
-$$
-
-### Volatility
-
-$$
-\sigma_p(\mathbf w) = \sqrt{\mathbf w^T\Sigma\mathbf w}.
-$$
-
-### Income yield
-
-$$
-Y(\mathbf w)=\mathbf y^T\mathbf w.
-$$
-
-### Turnover
-
-$$
-T(\mathbf w)=\sum_{i=1}^{n}\left|w_i-w_i^{(0)}\right|.
-$$
-
-### Estimated transaction cost
-
-$$
-C(\mathbf w)=\sum_{i=1}^{n}c_i\left|w_i-w_i^{(0)}\right|.
-$$
-
----
-
-## 6. Continuous classical model
-
-The initial classical optimization problem is
-
-$$
-\boxed{
-\begin{aligned}
-\min_{\mathbf w,\mathbf t}\quad
-&
-\lambda_{\mathrm{risk}}
-\mathbf w^T\Sigma\mathbf w
--
-
-\lambda_{\mathrm{return}}
-\boldsymbol{\mu}^T\mathbf w
--
-
-\lambda_{\mathrm{income}}
-\mathbf y^T\mathbf w
-+
-\lambda_{\mathrm{cost}}
-\sum_{i=1}^{n}c_it_i
-[3pt]
-\\
-\text{subject to}\quad
-&
-\sum_{i=1}^{n}w_i=1,
-\\
-&
-l_i\leq w_i\leq u_i,
-\qquad i\in\mathcal A,
-\\
-&
-L_g
-\leq
-\sum_{i=1}^{n}a_{gi}w_i
-\leq
-U_g,
-\qquad g\in\mathcal G,
-\\
-&
-t_i\geq w_i-w_i^{(0)},
-\qquad i\in\mathcal A,
-\\
-&
-t_i\geq w_i^{(0)}-w_i,
-\qquad i\in\mathcal A,
-\\
-&
-t_i\geq0,
-\qquad i\in\mathcal A.
-\end{aligned}
-}
-$$
-
-The auxiliary variables (t_i) produce
-
-$$
-t_i=\left|w_i-w_i^{(0)}\right|
-$$
-
-at the optimum whenever transaction costs have positive weights.
-
-The coefficients
-
-$$
-\lambda_{\mathrm{risk}},
-\lambda_{\mathrm{return}},
-\lambda_{\mathrm{income}},
-\lambda_{\mathrm{cost}}
-$$
-
-control the portfolio preferences.
-
-The budget, allocation bounds, and group exposure limits are hard constraints. Return, risk, income, and implementation cost are competing objectives.
-
----
-
-## 7. Initial baseline model
-
-The first implemented optimizer will omit the optional income preference:
-
-$$
-\lambda_{\mathrm{income}}=0.
-$$
-
-The baseline problem is therefore
-
-$$
-\boxed{
-\begin{aligned}
-\min_{\mathbf w,\mathbf t}\quad
-&
-\lambda_{\mathrm{risk}}
-\mathbf w^T\Sigma\mathbf w
--
-
-\lambda_{\mathrm{return}}
-\boldsymbol{\mu}^T\mathbf w
-+
-\lambda_{\mathrm{cost}}
-\sum_i c_it_i
-\\
-\text{subject to}\quad
-&
-\mathbf 1^T\mathbf w=1,
-\\
-&
-\mathbf l\leq\mathbf w\leq\mathbf u,
-\\
-&
-L_g\leq\sum_i a_{gi}w_i\leq U_g,
-\\
-&
-t_i\geq w_i-w_i^{(0)},
-\\
-&
-t_i\geq w_i^{(0)}-w_i,
-\\
-&
-t_i\geq0.
-\end{aligned}
-}
-$$
-
-This is a convex quadratic program when the covariance matrix is positive semidefinite.
-
----
-
-## 8. Discrete portfolio model
-
-Divide the total portfolio into (M) allocation units.
-
-Let
-
-$$
-q_i\in{0,1,\ldots,M}
-$$
-
-be the number of units allocated to asset (i).
-
-The portfolio weight is
-
-$$
-w_i=\frac{q_i}{M}.
-$$
-
-The full-investment constraint becomes
-
-$$
-\sum_iq_i=M.
-$$
-
-Asset bounds become
-
-$$
-\left\lceil Ml_i\right\rceil
-\leq
-q_i
-\leq
-\left\lfloor Mu_i\right\rfloor.
-$$
-
-Group constraints become
-
-$$
-\left\lceil ML_g\right\rceil
-\leq
-\sum_i a_{gi}q_i
-\leq
-\left\lfloor MU_g\right\rfloor.
-$$
-
-The initial small experiment will use
-
-$$
-M=10,
-$$
-
-so one allocation unit represents ten percent of the portfolio.
-
-The discrete model will initially be solved exactly by enumeration or by a mixed-integer quadratic optimizer. This exact discrete result will serve as the reference for the QUBO and quantum solutions.
-
----
-
-## 9. Binary representation
-
-The integer allocation will later be represented using binary variables.
-
-For binary expansion,
-
-$$
-q_i=\sum_{k=0}^{K-1}2^k x_{ik},
+## 1. Purpose and scope
+
+The model recommends a target allocation across asset classes while balancing
+expected return, variance, income, and implementation cost. Budget, allocation
+bounds, group exposure limits, and configured guardrails are hard constraints.
+
+This document is normative: every classical, QUBO, and quantum implementation
+must reproduce the definitions here. The implemented baseline is single-period,
+long-only, and uses annual decimal inputs.
+
+## 2. Sets and parameters
+
+Let \(i\in\mathcal A=\{1,\ldots,n\}\) index assets and
+\(g\in\mathcal G=\{1,\ldots,G\}\) index groups.
+
+| Symbol | Meaning |
+|---|---|
+| \(\mu_i\) | annual expected return of asset \(i\) |
+| \(\sigma_i\) | annual volatility of asset \(i\) |
+| \(\rho_{ij}\) | return correlation |
+| \(\Sigma_{ij}=\rho_{ij}\sigma_i\sigma_j\) | covariance matrix |
+| \(y_i\) | annual income yield |
+| \(c_i\ge0\) | proportional transaction-cost coefficient |
+| \(w_i^{(0)}\) | current allocation |
+| \(l_i,u_i\) | hard asset bounds |
+| \(a_{gi}\in\{0,1\}\) | group membership |
+| \(L_g,U_g\) | hard group exposure bounds |
+| \(B\) | total allocation budget; normally \(B=1\) |
+| \(R_{\min}\) | optional minimum expected return |
+| \(T_{\max}\) | optional maximum turnover |
+
+The covariance matrix must be symmetric positive semidefinite (PSD):
+
+\[
+x^\top\Sigma x\ge0\quad\text{for every }x\in\mathbb R^n.
+\]
+
+PSD is both financially necessary for nonnegative variance and mathematically
+necessary for a convex continuous risk term.
+
+## 3. Portfolio quantities
+
+For target weights \(w\in\mathbb R^n\):
+
+\[
+R(w)=\mu^\top w,
 \qquad
-x_{ik}\in{0,1}.
-$$
+V(w)=w^\top\Sigma w,
+\qquad
+\sigma_p(w)=\sqrt{V(w)},
+\]
 
-Alternatively, one-hot encoding can be used:
+\[
+Y(w)=y^\top w,
+\qquad
+T(w)=\sum_i|w_i-w_i^{(0)}|,
+\qquad
+C(w)=\sum_i c_i|w_i-w_i^{(0)}|.
+\]
 
-$$
-q_i=\sum_{m=0}^{M}m x_{im},
-$$
+Turnover and transaction cost are distinct. Turnover is an unweighted amount
+traded; cost weights each trade by \(c_i\).
 
-subject to
+## 4. Canonical objective
 
-$$
-\sum_{m=0}^{M}x_{im}=1.
-$$
+Every solver minimizes
 
-One-hot encoding is easier to validate, while binary expansion requires fewer binary variables.
+\[
+F(w)=
+\lambda_{\mathrm{risk}}w^\top\Sigma w
+-\lambda_{\mathrm{return}}\mu^\top w
+-\lambda_{\mathrm{income}}y^\top w
++\lambda_{\mathrm{cost}}\sum_i c_i|w_i-w_i^{(0)}|,
+\]
 
-The first QUBO experiment will use one-hot encoding on a small portfolio. Later scaling experiments will compare both encodings.
+where all \(\lambda\) coefficients are nonnegative.
 
----
+There is no hidden factor of \(1/2\) in this financial definition. A backend
+whose native form is \(\tfrac12x^\top P x+q^\top x\) must therefore use
+\(P_{ww}=2\lambda_{\mathrm{risk}}\Sigma\).
 
-## 10. Hard and soft requirements
+## 5. Continuous convex QP
 
-### Hard constraints
+Introduce epigraph variables \(t_i\ge0\) and solve
 
-Hard constraints must never be violated:
+\[
+\begin{aligned}
+\min_{w,t}\quad &
+\lambda_{\mathrm{risk}}w^\top\Sigma w
+-\lambda_{\mathrm{return}}\mu^\top w
+-\lambda_{\mathrm{income}}y^\top w
++\lambda_{\mathrm{cost}}c^\top t \\
+\text{s.t.}\quad
+&\mathbf1^\top w=B,\\
+&l_i\le w_i\le u_i &&\forall i,\\
+&L_g\le\sum_i a_{gi}w_i\le U_g &&\forall g,\\
+&t_i\ge w_i-w_i^{(0)} &&\forall i,\\
+&t_i\ge w_i^{(0)}-w_i &&\forall i,\\
+&\mu^\top w\ge R_{\min} &&\text{if configured},\\
+&\mathbf1^\top t\le T_{\max} &&\text{if configured}.
+\end{aligned}
+\]
 
-* Full investment
-* Asset minimum and maximum allocations
-* Asset-group exposure limits
-* Nonnegative long-only allocations
-* Any explicitly required liquidity or cash allocation
+When transaction-cost terms have positive coefficients, the optimizer drives
+\(t_i\) to \(|w_i-w_i^{(0)}|\). The independent evaluator always recomputes
+cost directly from \(w\), so a slack \(t_i\) can never distort a reported score.
 
-A solution with a hard-constraint violation is infeasible regardless of its objective value.
+## 6. Discrete lot MIQP
 
-### Soft objectives
+Divide budget \(B\) into \(M\) equal units of size
 
-Soft objectives may trade against each other:
+\[
+\delta=\frac{B}{M}.
+\]
 
-* Expected return
-* Risk
-* Income
-* Turnover
-* Transaction cost
-* Stress-scenario performance
-* Diversification
+Let \(q_i\in\mathbb Z_{\ge0}\) and \(w_i=\delta q_i\). Then
 
----
+\[
+\sum_i q_i=M,
+\]
 
-## 11. Required output metrics
+and the exact integer asset bounds are
 
-Every solver will be evaluated using the same metrics:
+\[
+\left\lceil\frac{l_i}{\delta}\right\rceil
+\le q_i\le
+\left\lfloor\frac{u_i}{\delta}\right\rfloor.
+\]
 
-$$
-R(\mathbf w)=\boldsymbol{\mu}^T\mathbf w,
-$$
+Lower bounds round upward; upper bounds round downward. This direction is
+required to preserve the original continuous constraints.
 
-$$
-V(\mathbf w)=\mathbf w^T\Sigma\mathbf w,
-$$
+Group constraints can be enforced directly in weight units,
 
-$$
-\sigma_p(\mathbf w)=\sqrt{\mathbf w^T\Sigma\mathbf w},
-$$
+\[
+L_g\le\delta\sum_i a_{gi}q_i\le U_g,
+\]
 
-$$
-T(\mathbf w)=\sum_i|w_i-w_i^{(0)}|,
-$$
+and the objective is exactly \(F(\delta q)\). Gurobi and compatible solvers see
+an MIQP: the risk term is quadratic, \(q\) is integer, and every constraint is
+linear after the turnover epigraph is introduced.
 
-$$
-C(\mathbf w)=\sum_i c_i|w_i-w_i^{(0)}|,
-$$
+## 7. Relationship among reference problems
 
-together with:
+```mermaid
+flowchart TD
+    C["Continuous feasible set"] --> D["Discrete M-lot subset"]
+    D --> B["Binary encoding of q"]
+    B --> Q["QUBO / quantum samples"]
+```
 
-* Objective value
-* Runtime
-* Number of hard-constraint breaches
-* Maximum constraint violation
-* Distance from the exact discrete optimum
-* Fraction of feasible samples
-* Allocation difference from the continuous baseline
+For minimization:
 
----
+\[
+F_C^*\le F_D^*.
+\]
 
-## 12. Development sequence
+Increasing \(M\) improves resolution but grows the exact enumeration space.
+The discrete optimum is the correct reference for a QUBO at that same \(M\);
+the continuous optimum is not.
 
-The project will be implemented in the following order:
+## 8. Hard feasibility
 
-1. Generate and validate synthetic asset data.
-2. Implement portfolio metric calculations.
-3. Solve the continuous quadratic program.
-4. Solve a tiny discrete problem exactly.
-5. Encode the discrete model as a QUBO.
-6. Verify that QUBO energy matches the direct objective.
-7. Run classical binary optimizers.
-8. Run quantum or quantum-inspired optimizers.
-9. Decode and validate all candidate portfolios.
-10. Expose portfolio preferences through the co-pilot interface.
+A candidate is feasible only if all configured hard constraints hold within the
+reported numerical tolerance. The validator checks the unmodified weights; it
+does not clip or renormalize a solver output after the solve.
 
+The discrete validator additionally checks that every weight lies on the
+\(\delta\)-grid. Hard violations cannot be offset by a better objective.
 
+## 9. Reported metrics
+
+Every run reports:
+
+- objective and its risk/return/income/cost components;
+- expected return, variance, volatility, income, turnover, and cost;
+- concentration (Herfindahl index) and effective holdings;
+- success, feasibility, breach count, and maximum violation;
+- wall-clock runtime, backend status, and available native diagnostics;
+- absolute and relative gap to an optimal/exact reference within the same model class;
+- seed for stochastic methods and lot resolution for discrete methods.
+
+## 10. Explicitly out of scope for this baseline
+
+The baseline does not claim to model taxes, market impact, nonlinear fees,
+multi-period wealth dynamics, tail risk, scenario constraints, liabilities, or
+short selling. Those extensions require new data and equations and must not be
+silently folded into the current objective.

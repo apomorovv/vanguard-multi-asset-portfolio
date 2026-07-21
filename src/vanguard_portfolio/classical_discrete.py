@@ -1,262 +1,931 @@
-"""Classical discrete mean-variance portfolio optimizer.
-
-This is the discrete counterpart to :mod:classical_continuous. Instead of
-continuous real-valued weights it allocates a fixed number of integer "lots"
-across assets, which keeps the budget constraint satisfied by construction
-and mirrors the binary/integer decision variables required by the quantum
-formulation.
-
-Weight encoding
----------------
-The budget is split into `n_lots` equal units. Asset `i` receives an integer
-number of lots `k_i` with `sum_i k_i == n_lots`. The resulting weight is::
-
-    w_i = (budget / n_lots) * k_i
-
-Per-asset bounds are translated into integer lot bounds. This lattice
-formulation is directly QUBO-friendly (a lot is a group of binary variables) and
-is used as the classical validator for the discrete/quantum solvers.
-
-Two solvers are provided:
-
-* `brute` - exhaustively enumerates every feasible lot allocation. Exact, but
-  only tractable for small `n_assets` / `n_lots`.
-* `anneal` - simulated annealing that moves one lot between assets each step,
-  preserving the budget automatically. Scales to larger problems.
-"""
+"""Discrete lot-allocation solvers for exact and heuristic baselines."""
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from itertools import combinations_with_replacement
-from typing import Dict, List, Optional
+from typing import Any, Iterator
 
 import numpy as np
+from scipy import sparse
+from scipy.optimize import Bounds, LinearConstraint, milp
 
-from .classical_continuous import PortfolioProblem
+from ._result import make_result
+from .portfolio_model import (
+    discrete_constraints_hold,
+    lot_bounds,
+    lots_to_weights,
+    objective_value,
+    swap_objective_delta,
+)
+from .schemas import (
+    InfeasibleProblemError,
+    PortfolioProblem,
+    Preferences,
+    SolveResult,
+    SolverSkippedError,
+    SolverUnavailableError,
+)
 
 
-def _lot_bounds(problem: PortfolioProblem, n_lots: int) -> tuple[np.ndarray, np.ndarray]:
-    """Translate continuous weight bounds into integer lot bounds."""
-    lot_size = problem.budget / n_lots
-    lo = np.floor(problem.lower_bounds / lot_size + 1e-9).astype(int)
-    hi = np.ceil(problem.upper_bounds / lot_size - 1e-9).astype(int)
-    lo = np.clip(lo, 0, n_lots)
-    hi = np.clip(hi, 0, n_lots)
-    hi = np.maximum(hi, lo)
-    return lo, hi
+def bounded_lot_allocation_count(problem: PortfolioProblem, units: int) -> int:
+    """Count budget-feasible lot vectors after asset bounds, before other rules.
+
+    The dynamic program is O(nM) and avoids constructing any allocations.  It
+    provides a much tighter enumeration safety estimate than the unrestricted
+    stars-and-bars count while remaining conservative with respect to group,
+    return, and turnover constraints.
+    """
+    low, high = lot_bounds(problem, units)
+    if np.any(low > high) or int(low.sum()) > units or int(high.sum()) < units:
+        return 0
+    counts = [0] * (units + 1)
+    counts[0] = 1
+    for lower, upper in zip(low.tolist(), high.tolist()):
+        updated = [0] * (units + 1)
+        window = 0
+        for total in range(units + 1):
+            add_index = total - lower
+            remove_index = total - upper - 1
+            if add_index >= 0:
+                window += counts[add_index]
+            if remove_index >= 0:
+                window -= counts[remove_index]
+            updated[total] = window
+        counts = updated
+    return int(counts[units])
 
 
-def _lots_to_weights(lots: np.ndarray, problem: PortfolioProblem, n_lots: int) -> np.ndarray:
-    return (problem.budget / n_lots) * lots.astype(float)
+def enumerate_feasible_lots(problem: PortfolioProblem, units: int) -> Iterator[np.ndarray]:
+    """Yield each hard-feasible integer composition exactly once."""
+    low, high = lot_bounds(problem, units)
+    if np.any(low > high) or low.sum() > units or high.sum() < units:
+        return
+    n = problem.n
+    suffix_low = np.zeros(n + 1, dtype=int)
+    suffix_high = np.zeros(n + 1, dtype=int)
+    for i in range(n - 1, -1, -1):
+        suffix_low[i] = suffix_low[i + 1] + low[i]
+        suffix_high[i] = suffix_high[i + 1] + high[i]
+    current = np.zeros(n, dtype=int)
+
+    def recurse(i: int, remaining: int) -> Iterator[np.ndarray]:
+        if i == n:
+            if remaining == 0 and discrete_constraints_hold(current, problem, units):
+                yield current.copy()
+            return
+        lo = max(int(low[i]), remaining - int(suffix_high[i + 1]))
+        hi = min(int(high[i]), remaining - int(suffix_low[i + 1]))
+        for value in range(lo, hi + 1):
+            current[i] = value
+            yield from recurse(i + 1, remaining - value)
+        current[i] = 0
+
+    yield from recurse(0, int(units))
 
 
-def _sector_penalty(weights: np.ndarray, problem: PortfolioProblem) -> float:
-    """Squared-violation penalty for exceeded sector-exposure limits."""
-    if problem.sector_map is None or not problem.sector_limits:
-        return 0.0
-    sector_map = np.asarray(problem.sector_map)
-    penalty = 0.0
-    for sector, limit in problem.sector_limits.items():
-        exposure = float(weights[sector_map == sector].sum())
-        if exposure > limit:
-            penalty += (exposure - limit) ** 2
-    return penalty
+def _first_feasible_lots(
+    problem: PortfolioProblem,
+    units: int,
+    *,
+    time_limit: float | None = 60.0,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Find a feasible lot vector with a zero-objective HiGHS MILP.
+
+    The earlier implementation recursively enumerated until it found a first
+    feasible point.  That is unsafe for hundreds of assets and can exceed
+    Python's recursion limit.  A dedicated feasibility MILP honors every hard
+    rule and supplies scalable starts for both classical heuristics.
+    """
+    low, high = lot_bounds(problem, units)
+    if np.any(low > high) or int(low.sum()) > units or int(high.sum()) < units:
+        raise InfeasibleProblemError(
+            f"no feasible discrete allocation exists at M={units}; asset lot bounds conflict"
+        )
+
+    n = problem.n
+    dimension = 2 * n
+    lot_size = problem.budget / units
+    identity = sparse.eye(n, format="csr")
+    zeros = sparse.csr_matrix((n, n), dtype=float)
+    blocks: list[sparse.spmatrix] = []
+    lower_rows: list[np.ndarray] = []
+    upper_rows: list[np.ndarray] = []
+
+    def add(matrix: sparse.spmatrix, lower: np.ndarray | float, upper: np.ndarray | float) -> None:
+        rows = matrix.shape[0]
+        blocks.append(matrix.tocsr())
+        lower_rows.append(np.broadcast_to(np.asarray(lower, dtype=float), (rows,)).copy())
+        upper_rows.append(np.broadcast_to(np.asarray(upper, dtype=float), (rows,)).copy())
+
+    budget = sparse.csr_matrix(
+        (np.ones(n), (np.zeros(n, dtype=int), np.arange(n))), shape=(1, dimension)
+    )
+    add(budget, units, units)
+    add(
+        sparse.hstack(
+            (
+                lot_size * sparse.csr_matrix(problem.A),
+                sparse.csr_matrix((problem.num_groups, n)),
+            ),
+            format="csr",
+        ),
+        problem.group_lower,
+        problem.group_upper,
+    )
+    add(
+        sparse.hstack((-lot_size * identity, identity), format="csr"),
+        -problem.w0,
+        np.inf,
+    )
+    add(
+        sparse.hstack((lot_size * identity, identity), format="csr"),
+        problem.w0,
+        np.inf,
+    )
+    if problem.target_return is not None:
+        add(
+            sparse.csr_matrix(
+                np.concatenate((lot_size * problem.mu, np.zeros(n)))[None, :]
+            ),
+            problem.target_return,
+            np.inf,
+        )
+    if problem.max_turnover is not None:
+        add(
+            sparse.csr_matrix(np.concatenate((np.zeros(n), np.ones(n)))[None, :]),
+            -np.inf,
+            problem.max_turnover,
+        )
+
+    constraints = LinearConstraint(
+        sparse.vstack(blocks, format="csc"),
+        np.concatenate(lower_rows),
+        np.concatenate(upper_rows),
+    )
+    variable_bounds = Bounds(
+        np.concatenate((low.astype(float), np.zeros(n))),
+        np.concatenate((high.astype(float), np.full(n, np.inf))),
+    )
+    options: dict[str, Any] = {"disp": False}
+    if time_limit is not None:
+        options["time_limit"] = float(time_limit)
+
+    start = time.perf_counter()
+    result = milp(
+        c=np.zeros(dimension),
+        integrality=np.concatenate((np.ones(n, dtype=int), np.zeros(n, dtype=int))),
+        bounds=variable_bounds,
+        constraints=constraints,
+        options=options,
+    )
+    runtime = time.perf_counter() - start
+    if result.x is None:
+        raise InfeasibleProblemError(
+            f"no feasible discrete allocation was found at M={units}: {result.message}"
+        )
+    lots = np.rint(np.asarray(result.x[:n])).astype(int)
+    if not discrete_constraints_hold(lots, problem, units):
+        raise InfeasibleProblemError(
+            "the feasibility MILP returned a candidate that failed independent validation"
+        )
+    return lots, {
+        "feasible_start_method": "scipy_highs_milp",
+        "feasible_start_status": str(result.message),
+        "feasible_start_seconds": runtime,
+    }
+
+
+def solve_discrete_enumeration(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 10,
+    max_candidates: int | None = 2_000_000,
+    max_assets: int | None = 200,
+) -> SolveResult:
+    """Prove the tiny-instance optimum by exhaustive feasible enumeration."""
+    preferences = preferences or Preferences()
+    start = time.perf_counter()
+    if max_assets is not None and problem.n > int(max_assets):
+        raise SolverSkippedError(
+            "exact enumeration recursion safety guard: "
+            f"n_assets={problem.n} exceeds max_assets={int(max_assets)}"
+        )
+    bounded_candidates = bounded_lot_allocation_count(problem, units)
+    if max_candidates is not None and bounded_candidates > int(max_candidates):
+        raise SolverSkippedError(
+            "exact enumeration safety guard: "
+            f"{bounded_candidates:,} asset-bound-feasible lot vectors exceed "
+            f"max_candidates={int(max_candidates):,}; use Gurobi/SCIP or a heuristic"
+        )
+    best_lots: np.ndarray | None = None
+    best_objective = np.inf
+    feasible_candidates = 0
+    for lots in enumerate_feasible_lots(problem, units):
+        feasible_candidates += 1
+        weights = lots_to_weights(lots, problem, units)
+        value = objective_value(weights, problem, preferences)
+        if value < best_objective - 1e-15:
+            best_objective = value
+            best_lots = lots.copy()
+    runtime = time.perf_counter() - start
+    if best_lots is None:
+        raise InfeasibleProblemError(f"no feasible discrete allocation exists at M={units}")
+    return make_result(
+        method="exact_enumeration",
+        model_type="discrete",
+        weights=lots_to_weights(best_lots, problem, units),
+        problem=problem,
+        preferences=preferences,
+        runtime=runtime,
+        status="optimal",
+        success=True,
+        optimal=True,
+        units=units,
+        metadata={
+            "lots": best_lots.tolist(),
+            "bounded_candidates_before_group_constraints": bounded_candidates,
+            "feasible_candidates": feasible_candidates,
+            "model_build_seconds": 0.0,
+            "solve_seconds": runtime,
+        },
+    )
+
+
+@dataclass
+class _SwapState:
+    lots: np.ndarray
+    weights: np.ndarray
+    cov_times_weights: np.ndarray
+    group_exposure: np.ndarray
+    expected_return: float
+    turnover: float
+    objective: float
+
+
+def _make_swap_state(
+    lots: np.ndarray,
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    units: int,
+) -> _SwapState:
+    lots = np.asarray(lots, dtype=int).copy()
+    weights = lots_to_weights(lots, problem, units)
+    return _SwapState(
+        lots=lots,
+        weights=weights,
+        cov_times_weights=problem.cov @ weights,
+        group_exposure=problem.A @ weights,
+        expected_return=float(problem.mu @ weights),
+        turnover=float(np.sum(np.abs(weights - problem.w0))),
+        objective=objective_value(weights, problem, preferences),
+    )
+
+
+def _turnover_change(
+    state: _SwapState,
+    donor: int,
+    receiver: int,
+    problem: PortfolioProblem,
+    units: int,
+) -> float:
+    lot_size = problem.budget / units
+    before = (
+        abs(state.weights[donor] - problem.w0[donor])
+        + abs(state.weights[receiver] - problem.w0[receiver])
+    )
+    after = (
+        abs(state.weights[donor] - lot_size - problem.w0[donor])
+        + abs(state.weights[receiver] + lot_size - problem.w0[receiver])
+    )
+    return float(after - before)
+
+
+def _swap_is_feasible(
+    state: _SwapState,
+    donor: int,
+    receiver: int,
+    problem: PortfolioProblem,
+    units: int,
+    low: np.ndarray,
+    high: np.ndarray,
+    tol: float = 1e-10,
+) -> bool:
+    if donor == receiver:
+        return False
+    if state.lots[donor] <= low[donor] or state.lots[receiver] >= high[receiver]:
+        return False
+
+    lot_size = problem.budget / units
+    donor_group = problem.asset_group[donor]
+    receiver_group = problem.asset_group[receiver]
+    if donor_group != receiver_group:
+        donor_exposure = state.group_exposure[donor_group] - lot_size
+        receiver_exposure = state.group_exposure[receiver_group] + lot_size
+        if (
+            donor_exposure < problem.group_lower[donor_group] - tol
+            or donor_exposure > problem.group_upper[donor_group] + tol
+            or receiver_exposure < problem.group_lower[receiver_group] - tol
+            or receiver_exposure > problem.group_upper[receiver_group] + tol
+        ):
+            return False
+
+    if problem.target_return is not None:
+        trial_return = state.expected_return + lot_size * (
+            problem.mu[receiver] - problem.mu[donor]
+        )
+        if trial_return < problem.target_return - tol:
+            return False
+
+    if problem.max_turnover is not None:
+        trial_turnover = state.turnover + _turnover_change(
+            state, donor, receiver, problem, units
+        )
+        if trial_turnover > problem.max_turnover + tol:
+            return False
+    return True
+
+
+def _apply_swap(
+    state: _SwapState,
+    donor: int,
+    receiver: int,
+    delta_objective: float,
+    problem: PortfolioProblem,
+    units: int,
+) -> None:
+    lot_size = problem.budget / units
+    turnover_delta = _turnover_change(state, donor, receiver, problem, units)
+    donor_group = problem.asset_group[donor]
+    receiver_group = problem.asset_group[receiver]
+
+    state.lots[donor] -= 1
+    state.lots[receiver] += 1
+    state.weights[donor] -= lot_size
+    state.weights[receiver] += lot_size
+    state.cov_times_weights += lot_size * (
+        problem.cov[:, receiver] - problem.cov[:, donor]
+    )
+    if donor_group != receiver_group:
+        state.group_exposure[donor_group] -= lot_size
+        state.group_exposure[receiver_group] += lot_size
+    state.expected_return += lot_size * (problem.mu[receiver] - problem.mu[donor])
+    state.turnover += turnover_delta
+    state.objective += delta_objective
+
+
+def _candidate_assets(
+    state: _SwapState,
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    low: np.ndarray,
+    high: np.ndarray,
+    candidate_pool_size: int | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    donors = np.flatnonzero(state.lots > low)
+    receivers = np.flatnonzero(state.lots < high)
+    if candidate_pool_size is None:
+        return donors, receivers
+    pool = max(1, int(candidate_pool_size))
+    if donors.size <= pool and receivers.size <= pool:
+        return donors, receivers
+
+    smooth_gradient = (
+        2.0 * preferences.lambda_risk * state.cov_times_weights
+        - preferences.lambda_return * problem.mu
+        - preferences.lambda_income * problem.y
+    )
+    if donors.size > pool:
+        donor_order = np.argpartition(smooth_gradient[donors], -pool)[-pool:]
+        donors = donors[donor_order]
+    if receivers.size > pool:
+        receiver_order = np.argpartition(smooth_gradient[receivers], pool - 1)[:pool]
+        receivers = receivers[receiver_order]
+    return donors, receivers
+
+
+def _local_improve(
+    initial: np.ndarray,
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    units: int,
+    max_iterations: int,
+    candidate_pool_size: int | None = None,
+) -> tuple[np.ndarray, int, int, bool]:
+    """One-lot best-improvement search using O(1) proposal deltas.
+
+    With ``candidate_pool_size=None`` every donor/receiver pair is checked and
+    the termination point is a true one-swap local optimum.  A finite pool
+    ranks assets by smooth marginal objective and keeps large runs bounded.
+    """
+    state = _make_swap_state(initial, problem, preferences, units)
+    low, high = lot_bounds(problem, units)
+    evaluations = 0
+    iterations = 0
+    stationary = False
+    for _ in range(max_iterations):
+        best_pair: tuple[int, int] | None = None
+        best_delta = 0.0
+        donors, receivers = _candidate_assets(
+            state, problem, preferences, low, high, candidate_pool_size
+        )
+        for donor in donors:
+            for receiver in receivers:
+                donor_index = int(donor)
+                receiver_index = int(receiver)
+                if not _swap_is_feasible(
+                    state,
+                    donor_index,
+                    receiver_index,
+                    problem,
+                    units,
+                    low,
+                    high,
+                ):
+                    continue
+                evaluations += 1
+                delta = swap_objective_delta(
+                    state.weights,
+                    state.cov_times_weights,
+                    donor_index,
+                    receiver_index,
+                    problem,
+                    preferences,
+                    units,
+                )
+                if delta < best_delta - 1e-13:
+                    best_delta = delta
+                    best_pair = (donor_index, receiver_index)
+        if best_pair is None:
+            stationary = True
+            break
+        _apply_swap(state, *best_pair, best_delta, problem, units)
+        iterations += 1
+    return state.lots, iterations, evaluations, stationary
+
+
+def solve_discrete_local_search(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 20,
+    max_iterations: int = 500,
+    candidate_pool_size: int | None = None,
+    feasible_start_time_limit: float | None = 60.0,
+    initial_lots: np.ndarray | None = None,
+) -> SolveResult:
+    """Run deterministic one-lot best-improvement local search."""
+    preferences = preferences or Preferences()
+    start = time.perf_counter()
+    start_metadata: dict[str, Any] = {}
+    if initial_lots is None:
+        initial, start_metadata = _first_feasible_lots(
+            problem, units, time_limit=feasible_start_time_limit
+        )
+    else:
+        initial = np.asarray(initial_lots, dtype=int)
+        start_metadata = {"feasible_start_method": "provided"}
+    if not discrete_constraints_hold(initial, problem, units):
+        raise ValueError("initial_lots is not hard-feasible")
+    search_start = time.perf_counter()
+    best, iterations, evaluations, stationary = _local_improve(
+        initial,
+        problem,
+        preferences,
+        units,
+        max_iterations,
+        candidate_pool_size=candidate_pool_size,
+    )
+    solve_seconds = time.perf_counter() - search_start
+    runtime = time.perf_counter() - start
+    if stationary and candidate_pool_size is None:
+        status = "one_swap_locally_optimal"
+    elif stationary:
+        status = "candidate_pool_stationary"
+    else:
+        status = "iteration_limit"
+    return make_result(
+        method="swap_local_search",
+        model_type="discrete",
+        weights=lots_to_weights(best, problem, units),
+        problem=problem,
+        preferences=preferences,
+        runtime=runtime,
+        status=status,
+        success=True,
+        optimal=False,
+        units=units,
+        metadata={
+            **start_metadata,
+            "lots": best.tolist(),
+            "iterations": iterations,
+            "objective_evaluations": evaluations,
+            "candidate_pool_size": candidate_pool_size,
+            "stationary": stationary,
+            "solve_seconds": solve_seconds,
+        },
+    )
+
+
+def solve_discrete_annealing(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 20,
+    seed: int = 0,
+    n_iterations: int = 20_000,
+    initial_temperature: float = 0.02,
+    final_temperature: float = 1e-5,
+    local_polish: bool = True,
+    polish_candidate_pool_size: int | None = None,
+    feasible_start_time_limit: float | None = 60.0,
+    initial_lots: np.ndarray | None = None,
+) -> SolveResult:
+    """Budget-preserving simulated annealing followed by optional swap polish."""
+    if n_iterations <= 0 or initial_temperature <= 0 or final_temperature <= 0:
+        raise ValueError("annealing iterations and temperatures must be positive")
+    preferences = preferences or Preferences()
+    rng = np.random.default_rng(seed)
+    start = time.perf_counter()
+    if initial_lots is None:
+        initial, start_metadata = _first_feasible_lots(
+            problem, units, time_limit=feasible_start_time_limit
+        )
+    else:
+        initial = np.asarray(initial_lots, dtype=int)
+        start_metadata = {"feasible_start_method": "provided"}
+    if not discrete_constraints_hold(initial, problem, units):
+        raise ValueError("initial_lots is not hard-feasible")
+    state = _make_swap_state(initial, problem, preferences, units)
+    low, high = lot_bounds(problem, units)
+
+    # Randomize the deterministic feasible start without violating hard constraints.
+    for _ in range(10 * problem.n):
+        donor, receiver = rng.choice(problem.n, size=2, replace=False)
+        donor = int(donor)
+        receiver = int(receiver)
+        if _swap_is_feasible(state, donor, receiver, problem, units, low, high):
+            delta = swap_objective_delta(
+                state.weights,
+                state.cov_times_weights,
+                donor,
+                receiver,
+                problem,
+                preferences,
+                units,
+            )
+            _apply_swap(state, donor, receiver, delta, problem, units)
+
+    best = state.lots.copy()
+    best_value = state.objective
+    accepted = 0
+    feasible_trials = 0
+    ratio = final_temperature / initial_temperature
+    solve_start = time.perf_counter()
+
+    for step in range(n_iterations):
+        donor, receiver = rng.choice(problem.n, size=2, replace=False)
+        donor = int(donor)
+        receiver = int(receiver)
+        if not _swap_is_feasible(state, donor, receiver, problem, units, low, high):
+            continue
+        feasible_trials += 1
+        delta = swap_objective_delta(
+            state.weights,
+            state.cov_times_weights,
+            donor,
+            receiver,
+            problem,
+            preferences,
+            units,
+        )
+        fraction = step / max(n_iterations - 1, 1)
+        temperature = initial_temperature * ratio**fraction
+        if delta <= 0.0 or rng.random() < np.exp(-delta / temperature):
+            _apply_swap(state, donor, receiver, delta, problem, units)
+            accepted += 1
+            if state.objective < best_value:
+                best = state.lots.copy()
+                best_value = state.objective
+
+    polish_iterations = 0
+    polish_evaluations = 0
+    polish_stationary = False
+    if local_polish:
+        best, polish_iterations, polish_evaluations, polish_stationary = _local_improve(
+            best,
+            problem,
+            preferences,
+            units,
+            max_iterations=500,
+            candidate_pool_size=polish_candidate_pool_size,
+        )
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - start
+    return make_result(
+        method="simulated_annealing_swap",
+        model_type="discrete",
+        weights=lots_to_weights(best, problem, units),
+        problem=problem,
+        preferences=preferences,
+        runtime=runtime,
+        status="heuristic_complete",
+        success=True,
+        optimal=False,
+        units=units,
+        seed=seed,
+        metadata={
+            **start_metadata,
+            "lots": best.tolist(),
+            "iterations": n_iterations,
+            "feasible_trials": feasible_trials,
+            "accepted_moves": accepted,
+            "polish_iterations": polish_iterations,
+            "polish_evaluations": polish_evaluations,
+            "polish_stationary": polish_stationary,
+            "polish_candidate_pool_size": polish_candidate_pool_size,
+            "solve_seconds": solve_seconds,
+            "fast_swap_deltas": True,
+        },
+    )
+
+
+def solve_discrete_gurobi(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 20,
+    time_limit: float | None = None,
+    mip_gap: float = 1e-9,
+    threads: int | None = None,
+    seed: int | None = None,
+    node_limit: float | None = None,
+    mip_focus: int | None = None,
+    heuristics: float | None = None,
+    output: bool = False,
+) -> SolveResult:
+    """Solve the integer-lot MIQP directly with optional Gurobi."""
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SolverUnavailableError(
+            "gurobipy is not installed; install the 'gurobi' extra"
+        ) from exc
+
+    start = time.perf_counter()
+    preferences = preferences or Preferences()
+    low, high = lot_bounds(problem, units)
+    if np.any(low > high):
+        raise InfeasibleProblemError("discrete lot bounds are infeasible")
+    lot_size = problem.budget / units
+    try:
+        model = gp.Model("vanguard_discrete")
+        model.Params.OutputFlag = int(output)
+        model.Params.MIPGap = float(mip_gap)
+        if time_limit is not None:
+            model.Params.TimeLimit = float(time_limit)
+        if threads is not None:
+            model.Params.Threads = int(threads)
+        if seed is not None:
+            model.Params.Seed = int(seed)
+        if node_limit is not None:
+            model.Params.NodeLimit = float(node_limit)
+        if mip_focus is not None:
+            model.Params.MIPFocus = int(mip_focus)
+        if heuristics is not None:
+            model.Params.Heuristics = float(heuristics)
+        q = model.addMVar(problem.n, vtype=GRB.INTEGER, lb=low, ub=high, name="q")
+        t = model.addMVar(problem.n, lb=0.0, name="t")
+        model.addConstr(q.sum() == units, name="budget_lots")
+        model.addConstr(lot_size * (problem.A @ q) >= problem.group_lower, name="group_lower")
+        model.addConstr(lot_size * (problem.A @ q) <= problem.group_upper, name="group_upper")
+        model.addConstr(t >= lot_size * q - problem.w0, name="turnover_plus")
+        model.addConstr(t >= problem.w0 - lot_size * q, name="turnover_minus")
+        if problem.target_return is not None:
+            model.addConstr(lot_size * (problem.mu @ q) >= problem.target_return)
+        if problem.max_turnover is not None:
+            model.addConstr(t.sum() <= problem.max_turnover)
+        model.setObjective(
+            preferences.lambda_risk * lot_size**2 * (q @ problem.cov @ q)
+            - preferences.lambda_return * lot_size * (problem.mu @ q)
+            - preferences.lambda_income * lot_size * (problem.y @ q)
+            + preferences.lambda_cost * (problem.c @ t),
+            GRB.MINIMIZE,
+        )
+        build_seconds = time.perf_counter() - start
+        solve_start = time.perf_counter()
+        model.optimize()
+    except gp.GurobiError as exc:  # pragma: no cover - license dependent
+        raise SolverUnavailableError(f"Gurobi could not start or solve: {exc}") from exc
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - start
+    success = model.SolCount > 0
+    optimal = model.Status == GRB.OPTIMAL
+    lots = np.rint(np.asarray(q.X)).astype(int) if success else np.zeros(problem.n, dtype=int)
+    weights = lots_to_weights(lots, problem, units) if success else np.full(problem.n, np.nan)
+    status_names = {
+        GRB.OPTIMAL: "optimal",
+        GRB.INFEASIBLE: "infeasible",
+        GRB.INF_OR_UNBD: "infeasible_or_unbounded",
+        GRB.TIME_LIMIT: "time_limit",
+        GRB.SUBOPTIMAL: "suboptimal",
+    }
+    metadata: dict[str, Any] = {
+        "lots": lots.tolist(),
+        "solver_runtime": float(model.Runtime),
+        "nodes": float(model.NodeCount),
+        "model_build_seconds": build_seconds,
+        "solve_seconds": solve_seconds,
+    }
+    if success:
+        metadata["native_objective"] = float(model.ObjVal)
+        try:
+            metadata["best_bound"] = float(model.ObjBound)
+            metadata["reported_mip_gap"] = float(model.MIPGap)
+        except gp.GurobiError:
+            pass
+    return make_result(
+        method="gurobi_miqp",
+        model_type="discrete",
+        weights=weights,
+        problem=problem,
+        preferences=preferences,
+        runtime=runtime,
+        status=status_names.get(model.Status, f"status_{model.Status}"),
+        success=success,
+        optimal=optimal,
+        units=units,
+        seed=seed,
+        metadata=metadata,
+    )
+
+
+def solve_discrete_cvxpy(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 20,
+    solver_name: str = "SCIP",
+    solver_options: dict[str, Any] | None = None,
+) -> SolveResult:
+    """Solve the MIQP through an installed CVXPY MIP-capable backend."""
+    try:
+        import cvxpy as cp
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SolverUnavailableError("CVXPY is not installed; install the 'qp' extra") from exc
+
+    solver_name = solver_name.upper()
+    if solver_name not in cp.installed_solvers():
+        raise SolverUnavailableError(f"CVXPY solver {solver_name!r} is not installed")
+    total_start = time.perf_counter()
+    preferences = preferences or Preferences()
+    build_start = time.perf_counter()
+    low, high = lot_bounds(problem, units)
+    lot_size = problem.budget / units
+    q = cp.Variable(problem.n, integer=True, name="q")
+    t = cp.Variable(problem.n, nonneg=True, name="t")
+    w = lot_size * q
+    objective = cp.Minimize(
+        preferences.lambda_risk * cp.quad_form(w, cp.psd_wrap(problem.cov))
+        - preferences.lambda_return * problem.mu @ w
+        - preferences.lambda_income * problem.y @ w
+        + preferences.lambda_cost * problem.c @ t
+    )
+    constraints = [
+        q >= low,
+        q <= high,
+        cp.sum(q) == units,
+        problem.A @ w >= problem.group_lower,
+        problem.A @ w <= problem.group_upper,
+        t >= w - problem.w0,
+        t >= problem.w0 - w,
+    ]
+    if problem.target_return is not None:
+        constraints.append(problem.mu @ w >= problem.target_return)
+    if problem.max_turnover is not None:
+        constraints.append(cp.sum(t) <= problem.max_turnover)
+    model = cp.Problem(objective, constraints)
+    build_seconds = time.perf_counter() - build_start
+    solve_start = time.perf_counter()
+    try:
+        model.solve(solver=solver_name, verbose=False, **dict(solver_options or {}))
+    except cp.error.SolverError as exc:  # pragma: no cover - solver-specific
+        raise SolverUnavailableError(f"CVXPY/{solver_name} could not run: {exc}") from exc
+    solve_seconds = time.perf_counter() - solve_start
+    runtime = time.perf_counter() - total_start
+    usable_statuses = {cp.OPTIMAL, cp.OPTIMAL_INACCURATE}
+    if hasattr(cp, "USER_LIMIT"):
+        usable_statuses.add(cp.USER_LIMIT)
+    success = model.status in usable_statuses and q.value is not None
+    lots = (
+        np.rint(np.asarray(q.value).reshape(-1)).astype(int)
+        if success
+        else np.zeros(problem.n, dtype=int)
+    )
+    weights = lots_to_weights(lots, problem, units) if success else np.full(problem.n, np.nan)
+    return make_result(
+        method=f"cvxpy_{solver_name.lower()}_miqp",
+        model_type="discrete",
+        weights=weights,
+        problem=problem,
+        preferences=preferences,
+        runtime=runtime,
+        status=str(model.status),
+        success=success,
+        optimal=model.status == cp.OPTIMAL,
+        units=units,
+        metadata={
+            "lots": lots.tolist(),
+            "solver_name": solver_name,
+            "native_objective": float(model.value) if model.value is not None else None,
+            "solver_runtime": getattr(model.solver_stats, "solve_time", None),
+            "extra_stats": getattr(model.solver_stats, "extra_stats", None),
+            "model_build_seconds": build_seconds,
+            "solve_seconds": solve_seconds,
+        },
+    )
+
+
+def solve_discrete(
+    problem: PortfolioProblem,
+    preferences: Preferences | None = None,
+    *,
+    units: int = 20,
+    backend: str = "enumeration",
+    **kwargs: Any,
+) -> SolveResult:
+    name = backend.strip()
+    lower = name.lower()
+    if lower in {"enumeration", "exact", "brute"}:
+        return solve_discrete_enumeration(problem, preferences, units=units, **kwargs)
+    if lower in {"local_search", "swap", "swap_local_search"}:
+        return solve_discrete_local_search(problem, preferences, units=units, **kwargs)
+    if lower in {"annealing", "anneal", "simulated_annealing"}:
+        return solve_discrete_annealing(problem, preferences, units=units, **kwargs)
+    if lower == "gurobi":
+        return solve_discrete_gurobi(problem, preferences, units=units, **kwargs)
+    if lower.startswith("cvxpy:"):
+        return solve_discrete_cvxpy(
+            problem,
+            preferences,
+            units=units,
+            solver_name=name.split(":", 1)[1],
+            **kwargs,
+        )
+    raise ValueError(f"unknown discrete backend {backend!r}")
 
 
 @dataclass
 class MeanVarianceDiscreteOptimizer:
-    """Discrete (integer-lot) mean-variance optimizer.
-
-    Parameters
-    ----------
-    problem:
-        The shared :class:PortfolioProblem definition.
-    n_lots:
-        Number of discrete units the budget is divided into. The weight
-        resolution is `budget / n_lots`.
-    method:
-        `"brute"` for exhaustive search or `"anneal"` for simulated
-        annealing.
-    penalty_weight:
-        Multiplier on the soft sector-exposure penalty added to the (negative)
-        utility during search.
-    """
-
     problem: PortfolioProblem
-    n_lots: int = 20
-    method: str = "anneal"
-    penalty_weight: float = 100.0
-    # Simulated-annealing controls
-    n_iter: int = 20_000
-    init_temp: float = 1.0
-    final_temp: float = 1e-3
-    seed: Optional[int] = None
+    preferences: Preferences = Preferences()
+    units: int = 20
+    method: str = "annealing"
+    seed: int = 0
 
-    def _score(self, lots: np.ndarray) -> float:
-        """Objective to maximize: utility minus soft sector penalty."""
-        w = _lots_to_weights(lots, self.problem, self.n_lots)
-        return self.problem.utility(w) - self.penalty_weight * _sector_penalty(w, self.problem)
-
-    # -- brute-force ----------------------------------------------------------
-    def _solve_brute(self) -> np.ndarray:
-        p = self.problem
-        n = p.n_assets
-        lo, hi = _lot_bounds(p, self.n_lots)
-
-        best_lots: Optional[np.ndarray] = None
-        best_score = -np.inf
-
-        # Enumerate all compositions of n_lots into n non-negative integers by
-        # choosing n-1 "dividers" among the lot positions (stars and bars).
-        for dividers in combinations_with_replacement(range(n), self.n_lots):
-            lots = np.bincount(dividers, minlength=n)
-            if np.any(lots < lo) or np.any(lots > hi):
-                continue
-            score = self._score(lots)
-            if score > best_score:
-                best_score = score
-                best_lots = lots
-
-        if best_lots is None:
-            raise ValueError(
-                "No feasible lot allocation satisfies the per-asset bounds; "
-                "relax bounds or increase n_lots."
-            )
-        return best_lots
-
-    # -- simulated annealing --------------------------------------------------
-    def _feasible_start(self, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
-        p = self.problem
-        n = p.n_assets
-        if int(lo.sum()) > self.n_lots or int(hi.sum()) < self.n_lots:
-            raise ValueError(
-                "Per-asset lot bounds are infeasible for the requested n_lots."
-            )
-        lots = lo.copy()
-        remaining = self.n_lots - int(lots.sum())
-        # Distribute the remaining lots respecting upper bounds.
-        headroom = hi - lots
-        order = np.argsort(-p.expected_returns)  # seed toward higher-return assets
-        for i in order:
-            if remaining <= 0:
-                break
-            add = min(headroom[i], remaining)
-            lots[i] += add
-            remaining -= add
-        if remaining > 0:  # pragma: no cover - guarded by feasibility check above
-            raise ValueError("Could not place all lots within bounds.")
-        return lots
-
-    def _solve_anneal(self) -> np.ndarray:
-        p = self.problem
-        n = p.n_assets
-        rng = np.random.default_rng(self.seed)
-        lo, hi = _lot_bounds(p, self.n_lots)
-
-        lots = self._feasible_start(lo, hi)
-        score = self._score(lots)
-        best_lots, best_score = lots.copy(), score
-
-        temps = np.geomspace(self.init_temp, self.final_temp, self.n_iter)
-        for temp in temps:
-            # Move one lot from a donor (has >lo) to a receiver (has <hi).
-            donors = np.flatnonzero(lots > lo)
-            receivers = np.flatnonzero(lots < hi)
-            if donors.size == 0 or receivers.size == 0:
-                break
-            i = rng.choice(donors)
-            j = rng.choice(receivers)
-            if i == j:
-                continue
-
-            trial = lots.copy()
-            trial[i] -= 1
-            trial[j] += 1
-            trial_score = self._score(trial)
-
-            delta = trial_score - score
-            if delta >= 0 or rng.random() < np.exp(delta / max(temp, 1e-12)):
-                lots, score = trial, trial_score
-                if score > best_score:
-                    best_lots, best_score = lots.copy(), score
-
-        return best_lots
-
-    # -- public API -----------------------------------------------------------
-    def solve(self) -> Dict[str, object]:
-        if self.method == "brute":
-            lots = self._solve_brute()
-        elif self.method == "anneal":
-            lots = self._solve_anneal()
-        else:
-            raise ValueError(f"Unknown method: {self.method!r} (use 'brute' or 'anneal')")
-
-        p = self.problem
-        w = _lots_to_weights(lots, p, self.n_lots)
-        return {
-            "weights": w,
-            "lots": lots,
-            "utility": p.utility(w),
-            "expected_return": p.expected_return(w),
-            "variance": p.variance(w),
-            "volatility": float(np.sqrt(max(p.variance(w), 0.0))),
-            "turnover": p.turnover(w),
-            "cost": p.cost(w),
-            "sector_penalty": _sector_penalty(w, p),
-            "n_lots": self.n_lots,
-            "method": self.method,
-        }
+    def solve(self, **kwargs: Any) -> SolveResult:
+        if self.method.lower() in {"annealing", "anneal", "simulated_annealing"}:
+            kwargs.setdefault("seed", self.seed)
+        return solve_discrete(
+            self.problem,
+            self.preferences,
+            units=self.units,
+            backend=self.method,
+            **kwargs,
+        )
 
 
 def mean_variance_discrete(
     problem: PortfolioProblem,
-    n_lots: int = 20,
-    method: str = "anneal",
-    **kwargs,
-) -> Dict[str, object]:
-    """Convenience wrapper: build the discrete optimizer and return its solution."""
-    return MeanVarianceDiscreteOptimizer(
-        problem=problem, n_lots=n_lots, method=method, **kwargs
-    ).solve()
-
-
-def _format_result(problem: PortfolioProblem, result: Dict[str, object]) -> str:
-    """Render a discrete solver result as a readable report."""
-    lines = [
-        f"Discrete mean-variance allocation "
-        f"(method={result['method']}, n_lots={result['n_lots']})",
-        "-" * 46,
-    ]
-    for name, w, k in zip(problem.asset_names, result["weights"], result["lots"]):
-        lines.append(f"  {name:<12} {w:>8.2%}   ({int(k)} lots)")
-    lines.append("-" * 46)
-    lines.append(f"  Expected return {result['expected_return']:>8.2%}")
-    lines.append(f"  Volatility      {result['volatility']:>8.2%}")
-    lines.append(f"  Variance        {result['variance']:>8.4f}")
-    lines.append(f"  Turnover        {result['turnover']:>8.2%}")
-    lines.append(f"  Cost            {result['cost']:>8.4f}")
-    lines.append(f"  Sector penalty  {result['sector_penalty']:>8.4f}")
-    lines.append(f"  Utility         {result['utility']:>8.4f}")
-    return "\n".join(lines)
-
-
-if __name__ == "__main__":
-    # Minimal demo so the module can be run directly to eyeball results:
-    #   python -m src.classical_discrete       (from the project root)
-    demo_mu = np.array([0.10, 0.07, 0.03])
-    demo_cov = np.diag([0.04, 0.02, 0.005])
-    demo_problem = PortfolioProblem(
-        demo_mu,
-        demo_cov,
-        risk_aversion=3.0,
-        asset_names=["equities", "credit", "govt_bonds"],
+    preferences: Preferences | None = None,
+    *,
+    n_lots: int | None = None,
+    units: int | None = None,
+    method: str = "annealing",
+    **kwargs: Any,
+) -> SolveResult:
+    """Compatibility wrapper accepting either ``n_lots`` or ``units``."""
+    resolved_units = units if units is not None else (n_lots if n_lots is not None else 20)
+    return solve_discrete(
+        problem,
+        preferences,
+        units=resolved_units,
+        backend=method,
+        **kwargs,
     )
-    # Exhaustive (exact) and simulated-annealing solutions for comparison.
-    brute_result = mean_variance_discrete(demo_problem, n_lots=10, method="brute")
-    anneal_result = mean_variance_discrete(
-        demo_problem, n_lots=10, method="anneal", seed=0
-    )
-    print(_format_result(demo_problem, brute_result))
-    print()
-    print(_format_result(demo_problem, anneal_result))
+
+
+__all__ = [
+    "MeanVarianceDiscreteOptimizer",
+    "bounded_lot_allocation_count",
+    "enumerate_feasible_lots",
+    "mean_variance_discrete",
+    "solve_discrete",
+    "solve_discrete_annealing",
+    "solve_discrete_cvxpy",
+    "solve_discrete_enumeration",
+    "solve_discrete_gurobi",
+    "solve_discrete_local_search",
+]

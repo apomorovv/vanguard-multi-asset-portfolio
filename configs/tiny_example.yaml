@@ -1,0 +1,32 @@
+problem:
+  source: synthetic
+  name: quick_smoke_test
+
+preferences:
+  preset: balanced
+  lambda_return: 1.0
+  lambda_risk: 5.0
+  lambda_income: 0.0
+  lambda_cost: 1.0
+
+discrete:
+  units: 10
+  seeds: [0]
+  annealing_iterations: 3000
+
+solvers:
+  continuous: [scipy]
+  discrete:
+    - name: enumeration
+      options: {max_candidates: 100000}
+    - local_search
+    - annealing
+  missing_optional: skip
+
+benchmark:
+  require_feasible_results: true
+
+outputs:
+  directory: results
+  make_plots: true
+  make_risk_aversion_sweep: false

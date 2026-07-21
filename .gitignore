@@ -1,43 +1,23 @@
-# Python cache
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-.ruff_cache/
-
-# Environments
+.coverage
+htmlcov/
 .venv/
 venv/
-env/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Editors and operating systems
-.vs/
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-# Credentials and secrets
 .env
-*.key
-credentials.json
-secrets.yaml
+.DS_Store
+.idea/
+.vscode/
 
-# Generated data
+# Generated experiment outputs (keep README and the committed example data).
+results/**
+!results/README.md
+runs/
+
+# Raw/processed data are intentionally not versioned.
 data/raw/*
 data/processed/*
-# data/synthetic/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-!data/synthetic/.gitkeep
-
-# Generated results
-# results/*
-!results/README.md
-
-# Logs
-*.log
-logs/

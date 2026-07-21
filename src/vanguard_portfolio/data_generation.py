@@ -1,97 +1,39 @@
-"""Synthetic multi-asset universe.
-
-This module builds a small, fully synthetic set of asset-class inputs that
-matches the notation used in `docs/mathematical_model.md`:
-
-* `mu`   annual expected return            (Section 3)
-* `sigma` annual volatility                 (Section 3)
-* `corr` correlation matrix                 (Section 3)
-* `cov`  covariance matrix `Sigma`        (Section 3)
-* `y`    annual income yield               (Section 3)
-* `c`    transaction-cost coefficient      (Section 3)
-* `w0`   current allocation                (Section 3)
-* `l,u`  per-asset allocation bounds       (Section 3)
-* group membership `A` and group limits `L_g, U_g` (Section 3)
-
-No real or confidential data is used. All numbers are illustrative and
-deterministic so that every solver is compared on an identical problem.
-"""
+"""Deterministic synthetic and scalable factor-model portfolio data."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import numpy as np
 
-
-@dataclass
-class PortfolioProblem:
-    """Container for every parameter of the portfolio-construction model."""
-
-    asset_names: list[str]
-    group_names: list[str]
-    # index of the group each asset belongs to (length n)
-    asset_group: list[int]
-
-    mu: np.ndarray          # expected return, shape (n,)
-    sigma: np.ndarray       # volatility, shape (n,)
-    corr: np.ndarray        # correlation matrix, shape (n, n)
-    cov: np.ndarray         # covariance matrix Sigma, shape (n, n)
-    y: np.ndarray           # income yield, shape (n,)
-    c: np.ndarray           # transaction cost, shape (n,)
-    w0: np.ndarray          # current allocation, shape (n,)
-    lower: np.ndarray       # per-asset lower bound l_i, shape (n,)
-    upper: np.ndarray       # per-asset upper bound u_i, shape (n,)
-
-    group_lower: np.ndarray  # group lower limit L_g, shape (G,)
-    group_upper: np.ndarray  # group upper limit U_g, shape (G,)
-
-    @property
-    def n(self) -> int:
-        """Number of assets."""
-        return len(self.asset_names)
-
-    @property
-    def num_groups(self) -> int:
-        """Number of asset groups."""
-        return len(self.group_names)
-
-    @property
-    def A(self) -> np.ndarray:
-        """Group-membership matrix `a_{gi}` of shape (G, n)."""
-        mat = np.zeros((self.num_groups, self.n))
-        for i, g in enumerate(self.asset_group):
-            mat[g, i] = 1.0
-        return mat
+from .schemas import PortfolioProblem
 
 
-def _is_psd(matrix: np.ndarray, tol: float = 1e-10) -> bool:
-    """Return True when `matrix` is symmetric positive semidefinite."""
-    if not np.allclose(matrix, matrix.T, atol=1e-12):
-        return False
-    eigenvalues = np.linalg.eigvalsh(matrix)
-    return bool(np.min(eigenvalues) >= -tol)
+def is_psd(matrix: np.ndarray, tol: float = 1e-10) -> bool:
+    matrix = np.asarray(matrix, dtype=float)
+    return bool(
+        matrix.ndim == 2
+        and matrix.shape[0] == matrix.shape[1]
+        and np.allclose(matrix, matrix.T, atol=1e-12)
+        and np.min(np.linalg.eigvalsh(matrix)) >= -tol
+    )
 
 
-def _nearest_psd(matrix: np.ndarray) -> np.ndarray:
-    """Clip negative eigenvalues to obtain the nearest PSD matrix."""
-    symmetric = (matrix + matrix.T) / 2.0
-    eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
-    eigenvalues = np.clip(eigenvalues, 0.0, None)
-    return eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+def nearest_correlation(matrix: np.ndarray, floor: float = 1e-10) -> np.ndarray:
+    """Return a symmetric PSD correlation matrix by eigenvalue clipping."""
+    symmetric = 0.5 * (np.asarray(matrix, dtype=float) + np.asarray(matrix, dtype=float).T)
+    values, vectors = np.linalg.eigh(symmetric)
+    psd = (vectors * np.maximum(values, floor)) @ vectors.T
+    scale = np.sqrt(np.maximum(np.diag(psd), floor))
+    corr = psd / np.outer(scale, scale)
+    corr = 0.5 * (corr + corr.T)
+    np.fill_diagonal(corr, 1.0)
+    return corr
 
 
 def generate_synthetic_universe() -> PortfolioProblem:
-    """Build the deterministic six-asset synthetic universe.
-
-    The asset classes mirror the example in the mathematical model: US
-    equity, international equity, government bonds, corporate bonds,
-    commodities and cash, grouped into equity, fixed income, alternatives
-    and cash.
-    """
-
+    """Build the deterministic six-asset instance used in tests and examples."""
     asset_names = [
         "US_Equity",
         "Intl_Equity",
@@ -108,11 +50,8 @@ def generate_synthetic_universe() -> PortfolioProblem:
     y = np.array([0.018, 0.025, 0.030, 0.040, 0.000, 0.015])
     c = np.array([0.0010, 0.0015, 0.0008, 0.0010, 0.0020, 0.0001])
     w0 = np.array([0.30, 0.20, 0.20, 0.15, 0.05, 0.10])
-
-    lower = np.array([0.00, 0.00, 0.00, 0.00, 0.00, 0.00])
+    lower = np.zeros(6)
     upper = np.array([0.50, 0.40, 0.50, 0.40, 0.20, 0.30])
-
-    # Correlation matrix (symmetric, unit diagonal).
     corr = np.array(
         [
             [1.00, 0.80, -0.20, 0.10, 0.30, 0.00],
@@ -123,14 +62,9 @@ def generate_synthetic_universe() -> PortfolioProblem:
             [0.00, 0.00, 0.05, 0.02, 0.00, 1.00],
         ]
     )
-
-    cov = corr * np.outer(sigma, sigma)  # Sigma_ij = rho_ij * sigma_i * sigma_j
-    if not _is_psd(cov):
-        cov = _nearest_psd(cov)
-
-    # Group limits L_g, U_g for equity, fixed income, alternatives, cash.
-    group_lower = np.array([0.30, 0.20, 0.00, 0.02])
-    group_upper = np.array([0.70, 0.60, 0.20, 0.30])
+    if not is_psd(corr):
+        corr = nearest_correlation(corr)
+    cov = corr * np.outer(sigma, sigma)
 
     return PortfolioProblem(
         asset_names=asset_names,
@@ -145,45 +79,83 @@ def generate_synthetic_universe() -> PortfolioProblem:
         w0=w0,
         lower=lower,
         upper=upper,
+        group_lower=np.array([0.30, 0.20, 0.00, 0.02]),
+        group_upper=np.array([0.70, 0.60, 0.20, 0.30]),
+    )
+
+
+def generate_factor_universe(
+    n_assets: int = 25,
+    n_groups: int = 5,
+    n_factors: int = 4,
+    seed: int = 0,
+) -> PortfolioProblem:
+    """Generate a reproducible PSD factor-model instance for scaling tests."""
+    if n_assets < 2 or not 1 <= n_groups <= n_assets:
+        raise ValueError("require n_assets >= 2 and 1 <= n_groups <= n_assets")
+    rng = np.random.default_rng(seed)
+    n_factors = max(1, min(int(n_factors), n_assets))
+    asset_group = (np.arange(n_assets) % n_groups).tolist()
+    rng.shuffle(asset_group)
+
+    loadings = rng.normal(0.0, 0.18, size=(n_assets, n_factors))
+    idiosyncratic = rng.uniform(0.05, 0.15, size=n_assets)
+    raw_cov = loadings @ loadings.T + np.diag(idiosyncratic**2)
+    raw_sigma = np.sqrt(np.diag(raw_cov))
+    desired_sigma = rng.uniform(0.05, 0.22, size=n_assets)
+    corr = raw_cov / np.outer(raw_sigma, raw_sigma)
+    # BB' + D is positive definite by construction, and positive diagonal
+    # scaling preserves PSD.  A full eigen-projection here used to impose an
+    # unnecessary O(n^3) cost on every large generated universe.
+    corr = 0.5 * (corr + corr.T)
+    np.fill_diagonal(corr, 1.0)
+    cov = corr * np.outer(desired_sigma, desired_sigma)
+
+    w0 = np.full(n_assets, 1.0 / n_assets)
+    upper = np.full(n_assets, max(0.20, 2.5 / n_assets))
+    upper = np.minimum(upper, 1.0)
+    group_exposure = np.bincount(asset_group, weights=w0, minlength=n_groups)
+    group_lower = np.maximum(0.0, group_exposure - 0.10)
+    group_upper = np.minimum(1.0, group_exposure + 0.15)
+
+    return PortfolioProblem(
+        asset_names=[f"Asset_{i:03d}" for i in range(n_assets)],
+        group_names=[f"Group_{g}" for g in range(n_groups)],
+        asset_group=asset_group,
+        mu=rng.uniform(0.015, 0.105, size=n_assets),
+        sigma=desired_sigma,
+        corr=corr,
+        cov=cov,
+        y=rng.uniform(0.0, 0.045, size=n_assets),
+        c=rng.uniform(0.0001, 0.0030, size=n_assets),
+        w0=w0,
+        lower=np.zeros(n_assets),
+        upper=upper,
         group_lower=group_lower,
         group_upper=group_upper,
     )
 
 
-def save_problem(problem: PortfolioProblem, directory: str | Path) -> Path:
-    """Serialise a :class:PortfolioProblem to a JSON file.
-
-    Returns the path of the written file.
-    """
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "synthetic_universe.json"
-
-    payload = asdict(problem)
-    for key, value in payload.items():
-        if isinstance(value, np.ndarray):
-            payload[key] = value.tolist()
-
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+def save_problem(problem: PortfolioProblem, destination: str | Path) -> Path:
+    """Save a problem as JSON; a directory target gets the standard filename."""
+    path = Path(destination)
+    if path.suffix.lower() != ".json":
+        path = path / "synthetic_universe.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(problem.to_dict(), indent=2) + "\n", encoding="utf-8")
     return path
 
 
 def load_problem(path: str | Path) -> PortfolioProblem:
-    """Load a :class:PortfolioProblem previously written by :func:save_problem."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    array_keys = {
-        "mu",
-        "sigma",
-        "corr",
-        "cov",
-        "y",
-        "c",
-        "w0",
-        "lower",
-        "upper",
-        "group_lower",
-        "group_upper",
-    }
-    for key in array_keys:
-        data[key] = np.array(data[key])
-    return PortfolioProblem(**data)
+    return PortfolioProblem.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+__all__ = [
+    "PortfolioProblem",
+    "generate_factor_universe",
+    "generate_synthetic_universe",
+    "is_psd",
+    "load_problem",
+    "nearest_correlation",
+    "save_problem",
+]
