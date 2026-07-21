@@ -358,12 +358,56 @@ class PortfolioVQESolver:
             "bounds_ok": bool(np.all(lots >= self.lot_lo) and np.all(lots <= self.lot_hi)),
             "sector_penalty": _sector_penalty_two_sided(w, self.problem),
         }
+    def _shot_feasibility_stats(self, bits_arr: np.ndarray) -> dict:
+        """Diagnostic only -- not used by the optimizer.
 
+        Of a batch of sampled bitstrings, what fraction actually satisfy each
+        hard constraint (and all three jointly)? This is the number that
+        tells you whether a bad utility_pp means "the ansatz found a
+        genuinely bad but feasible portfolio" or "the ansatz essentially
+        never samples a feasible portfolio at all, so utility_pp is being
+        computed on something that was never really comparable to a feasible
+        baseline in the first place."
+
+        Dedupes to unique bitstrings first (weighted by shot count) since a
+        converged variational state typically has far fewer unique outcomes
+        than raw shots, which keeps this cheap even at n_final_shots=20_000.
+        """
+        n_total = len(bits_arr)
+        if n_total == 0:
+            return {"n_total": 0}
+
+        unique_bits, counts = np.unique(bits_arr, axis=0, return_counts=True)
+
+        n_budget_ok = n_bounds_ok = n_sector_ok = n_all_ok = 0
+        for row, cnt in zip(unique_bits, counts):
+            lots = self.decode_lots(row)
+            budget_ok = int(lots.sum()) == self.cfg.n_lots
+            bounds_ok = bool(np.all(lots >= self.lot_lo) and np.all(lots <= self.lot_hi))
+            w = _lots_to_weights(lots, self.problem, self.cfg.n_lots)
+            sector_ok = _sector_penalty_two_sided(w, self.problem) == 0.0
+
+            n_budget_ok += int(cnt) * int(budget_ok)
+            n_bounds_ok += int(cnt) * int(bounds_ok)
+            n_sector_ok += int(cnt) * int(sector_ok)
+            n_all_ok += int(cnt) * int(budget_ok and bounds_ok and sector_ok)
+
+        return {
+            "n_total": n_total,
+            "n_unique": len(unique_bits),
+            "n_budget_ok": n_budget_ok,
+            "n_bounds_ok": n_bounds_ok,
+            "n_sector_ok": n_sector_ok,
+            "n_all_ok": n_all_ok,
+            "frac_budget_ok": n_budget_ok / n_total,
+            "frac_bounds_ok": n_bounds_ok / n_total,
+            "frac_sector_ok": n_sector_ok / n_total,
+            "frac_all_ok": n_all_ok / n_total,
+        }
     # -- sampling ----------------------------------------------------------
     def sample_and_evaluate(self, params: np.ndarray, n_shots: int):
         bound = self.isa_ansatz.assign_parameters(params)
         bound.measure_all()
-        job = self.simulator.run(bound, shots=n_shots)
         import time
         t0 = time.time()
         job = self.simulator.run(bound, shots=n_shots)
@@ -501,10 +545,27 @@ class PortfolioVQESolver:
         nft_log: list = []
         nft_budget = max(c.total_budget - pso_evals, 0)
         final_params, nft_evals = self.run_nft(best_pso_params, nft_budget, nft_log)
-
+        
         n_final_shots = 20_000
         bits_sorted, costs_sorted = self.sample_and_evaluate(final_params, n_final_shots)
         best_bits = bits_sorted[0]
+
+        # --- diagnostic: how much of the final distribution is even feasible? ---
+        feasibility_stats = self._shot_feasibility_stats(bits_sorted)
+        print(
+            f"Final sample feasibility ({feasibility_stats['n_total']} shots, "
+            f"{feasibility_stats['n_unique']} unique bitstrings): "
+            f"budget_ok={feasibility_stats['frac_budget_ok']:.1%}  "
+            f"bounds_ok={feasibility_stats['frac_bounds_ok']:.1%}  "
+            f"sector_ok={feasibility_stats['frac_sector_ok']:.1%}  "
+            f"ALL constraints={feasibility_stats['frac_all_ok']:.1%}"
+        )
+        if feasibility_stats["n_all_ok"] == 0:
+            print(
+                "  -> zero fully-feasible bitstrings in the final sample. "
+                "utility_pp below is being computed on an infeasible portfolio -- "
+                "not a fair comparison against a feasible baseline's utility."
+            )
 
         pp_candidates = []
         for i in range(min(10, len(bits_sorted))):
@@ -519,6 +580,7 @@ class PortfolioVQESolver:
             "final_params": final_params,
             "total_evals": pso_evals + nft_evals,
             "log": pso_log + nft_log,
+            "feasibility_stats": feasibility_stats,
             "bits_raw": best_bits,
             "bits_pp": best_pp_bits,
             "lots_raw": raw_eval["lots"],
