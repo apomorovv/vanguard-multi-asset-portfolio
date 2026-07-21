@@ -550,8 +550,8 @@ class QuantumMeanVarianceDiscreteOptimizer:
     group_names: List[str]
     risk_aversion: Optional[float] = None  # falls back to problem.risk_aversion
     cost_aversion: Optional[float] = None  # falls back to problem.cost_aversion
-    reps: int = 8
-    n_restarts: int = 5
+    reps: int = 12
+    n_restarts: int = 3
     alpha_0: float = 1.0
     threshold_m: float = 0.975
     max_alpha_iters: int = 30
