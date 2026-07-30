@@ -3,9 +3,9 @@ against the classical continuous and discrete baselines.
 
 Usage (from the repository root)::
 
-    python scripts/run_vqe_pce.py
+    python scripts/run_VQE_PCE.py
 
-This runner mirrors `run_quantum_vqe.py` but uses the Pauli Correlation Encoding
+This runner mirrors `run_VQE.py` but uses the Pauli Correlation Encoding
 (PCE) version of the VQE solver, which compresses the logical lot-bit
 register before optimization.
 """
@@ -159,11 +159,13 @@ def main() -> None:
         ("pce-vqe-raw",
          pce_result["utility_raw"],
          pce_result["sector_penalty_raw"],
-         pce_result["budget_ok_raw"] and pce_result["bounds_ok_raw"]),
+         pce_result["budget_ok_raw"] and pce_result["bounds_ok_raw"]
+         and pce_result["sector_penalty_raw"] < 1e-9),
         ("pce-vqe-postprocessed",
          pce_result["utility_pp"],
          pce_result["sector_penalty_pp"],
-         pce_result["budget_ok_pp"] and pce_result["bounds_ok_pp"]),
+         pce_result["budget_ok_pp"] and pce_result["bounds_ok_pp"]
+         and pce_result["sector_penalty_pp"] < 1e-9),
     ]
 
     for name, util, sec_pen, feasible in rows:
@@ -174,7 +176,11 @@ def main() -> None:
             f"{str(feasible):>10}"
         )
 
-    if pce_result["budget_ok_pp"] and pce_result["bounds_ok_pp"]:
+    pp_fully_feasible = (
+        pce_result["budget_ok_pp"] and pce_result["bounds_ok_pp"]
+        and pce_result["sector_penalty_pp"] < 1e-9
+    )
+    if pp_fully_feasible:
         gap = (
             100
             * (brute_result["utility"] - pce_result["utility_pp"])
