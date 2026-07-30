@@ -3,7 +3,7 @@ quantum_vqe_pce_solver.py
 =========================
 Combines Pauli Correlation Encoding (PCE, Sciorilli et al., Nat. Commun.
 2025) with the sampling-based VQA framework from `quantum_vqe_solver.py`
-(adaptive CVaR schedule + two-stage PSO->NFT optimizer), on the *same*
+(fixed CVaR + two-stage PSO->NFT optimizer), on the *same*
 single-period discrete portfolio problem those two modules already solve.
 
 This is "Option B" from the earlier discussion: keep the CVaR-over-sampled-
@@ -11,7 +11,7 @@ bitstrings training loop exactly as `quantum_vqe_solver.py` already does it,
 rather than switching to expectation-value (Estimator-based) training like
 `quantum_discrete.py`'s QAOA+PCE module. The only thing that changes is
 *how a logical lot-bit gets its value out of a shot* -- everything about
-PSO, NFT, the adaptive-alpha CVaR schedule, and bit-flip postprocessing is
+PSO, NFT, the fixed-alpha CVaR loss, and bit-flip postprocessing is
 reused unmodified in spirit.
 
 ------------------------------------------------------------------------
@@ -56,6 +56,39 @@ implicit in expectation-value PCE training (where you also just combine
 independently-estimated <Pi> values into one QUBO objective), so it's not
 introducing a new source of error relative to `quantum_discrete.py` --
 just making the sampling-based analogue of the same assumption explicit.
+
+>>> UPDATED: group assignment is now per-asset, not contiguous-thirds <<<
+An earlier version built group_x/group_y/group_z by slicing the flattened
+`self.encoding.bit_vars` list into three contiguous thirds. Since each
+asset owns `bits_per_asset` (~5) *contiguous* bits within that flattened
+list, a contiguous three-way slice routinely splits a single asset's own
+lot-count bits across two different measurement-basis groups. That means
+even an asset's OWN lot count -- let alone the cross-asset budget/sector
+constraints -- depended on the same independent-marginals cross-group
+pairing approximation described above, which is a much larger source of
+infeasibility than it needs to be: within-asset bit consistency doesn't
+NEED cross-group pairing to get right, only cross-asset constraints do.
+
+Empirically (see the qubit-overhead sweep this was diagnosed from):
+feasibility and utility_pp were both highly non-monotonic in qubit count
+and collapsed toward ~0% feasibility well before 30 assets, with more
+qubits unable to fix it -- consistent with an error source that qubit
+count (which only improves WITHIN-group resolution) can't touch, because
+the dominant error was cross-group.
+
+Fixed by assigning each asset's ENTIRE bit list to a single group
+(round-robin over assets, not over flattened bit position -- see
+`__init__`). This makes within-asset lot-count reconstruction EXACT
+(all of one asset's bits are read from the same measurement setting, so
+there's no independent-shuffle pairing involved in reconstructing that
+asset's own lot count). Only the cross-ASSET constraints (global budget
+sum, sector exposure sums) still depend on the cross-group approximation
+-- a strictly smaller joint-constraint surface than before. This should
+directly improve the feasibility numbers from the sweep, though it does
+NOT eliminate the cross-group approximation entirely (that's inherent to
+projective measurement of non-commuting observables, not fixable by
+qubit count or grouping strategy) -- expect feasibility to improve but
+plateau at scale, not go to 100%.
 
 >>> Flagged simplification: no hardware-native chain layout <<<
 `quantum_vqe_solver.py`'s HNDC-style deep-chain ansatz layout exists to
@@ -120,7 +153,6 @@ usually clamped to 0 anyway -- meaning most "nonzero total_budget" runs
 were secretly *also* PSO-only, just as deterministic as the total_budget=0
 case, and the two only differed on the rare runs where PSO happened to
 stop early enough to leave NFT a nonzero slice. Fixed two ways:
-
   1. `run_pso` now takes an explicit `budget_cap` (`min(max_pso_budget,
      total_budget)`), so total_budget is a real, shared cap across both
      stages -- and total_budget<=0 skips PSO and NFT entirely, using the
@@ -168,13 +200,13 @@ rather than "more chances for noise to crown an impostor."
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Optional
 
 import numpy as np
 
-from qiskit.circuit.library import efficient_su2
 from qiskit.circuit import QuantumCircuit, ParameterVector
 from qiskit_aer import AerSimulator
 
@@ -196,7 +228,7 @@ class VQEPCEConfig:
     reps: int = 1                    # ansatz repetitions (kept low, per the
     #                                   paper's own finding that fewer reps
     #                                   tend to win under a fixed budget)
-    total_budget: int = 300          # TRUE shared cap across PSO+NFT (fixed --
+    total_budget: int = 300         # TRUE shared cap across PSO+NFT (fixed --
     #                                   previously PSO used its own separate
     #                                   min/max_pso_budget uncapped by this
     #                                   value, so total_budget=0 didn't
@@ -204,10 +236,30 @@ class VQEPCEConfig:
     #                                   ran fully, only NFT's slice was
     #                                   zeroed. Now total_budget<=0 skips
     #                                   PSO and NFT entirely -- see run().
-    min_pso_budget: int = 180
-    max_pso_budget: int = 600
-    stagnation_window: int = 10
-    stagnation_tol: float = 0.01
+    #                                   Set per the paper: 1000-evaluation
+    #                                   total budget, with max_pso_budget
+    #                                   (600) = 60% of this total.
+    min_pso_budget: int = 120        # 30% of max_pso_budget (600), per the
+    #                                   paper's PSO budget allocation.
+    max_pso_budget: int = 600        # 60% of total_budget (1000), per the
+    #                                   paper's PSO budget allocation.
+    nft_reserve_fraction: float = 0.4  # see quantum_vqe_solver.py's
+    #                                    VQEConfig -- identical rationale
+    #                                    and identical prior bug (PSO could
+    #                                    consume the whole total_budget,
+    #                                    leaving NFT's adaptive-CVaR
+    #                                    narrowing with 0 evaluations).
+    #                                    With total_budget=1000, this caps
+    #                                    PSO's own allocation at
+    #                                    total_budget * 0.6 = 600 ==
+    #                                    max_pso_budget, so the two
+    #                                    constraints agree.
+    stagnation_window: int = 100     # paper: sliding window of 100
+    #                                   evaluations for the PSO stagnation
+    #                                   check (was 10).
+    stagnation_tol: float = 0.10     # paper: PSO stops early once relative
+    #                                   improvement over the stagnation
+    #                                   window falls below 10% (was 1%).
     n0_shots: int = 300              # per-basis-setting shot count at alpha=1.
     #                                   Deliberately well below the coupon-
     #                                   collector threshold for the reachable
@@ -217,16 +269,21 @@ class VQEPCEConfig:
     #                                   reachable basis state on every
     #                                   evaluation, training has nothing to
     #                                   bite into: every theta looks the same.
-    alpha_max: float = 1.0
-    alpha_min: float = 0.1
-    delta_alpha: float = 0.1
+    alpha_max: float = 1.0           # adaptive CVaR schedule restored:
+    #                                   PSO trains at this (average-cost,
+    #                                   cheap) alpha the whole time.
+    alpha_min: float = 0.3           # NFT narrows alpha from alpha_max
+    #                                   down to this floor as training
+    #                                   progresses (see adaptive_alpha()).
+    delta_alpha: float = 0.1         # alpha decreases by this much every
+    #                                   l_alpha NFT coordinate updates.
     l_alpha: int = 24
     n_particles: int = 20
     seed: int = 42
     pce_k: int = 2                   # correlator order; this module's per-
     #                                   shot decode (bit parity of exactly
     #                                   two qubits) only supports k=2.
-    n_qubits_override: Optional[int] = None
+    n_qubits_override: Optional[int] = 8
     #                                   reduce_qubits_with_pce(n_vars) returns
     #                                   the MINIMUM qubits PCE needs to fit
     #                                   n_vars variables -- nothing requires
@@ -271,6 +328,17 @@ class VQEPCEConfig:
     #                                   end, so it can afford enough shots
     #                                   that sampling noise stops being able
     #                                   to flip the decision.
+    min_improvement_frac: float = 0.01  # see quantum_vqe_solver.py's
+    #                                     VQEConfig -- a candidate only gets
+    #                                     added to the audit pool if it
+    #                                     beats the current elite by more
+    #                                     than this relative margin, so the
+    #                                     pool (and audit_sec, which scales
+    #                                     linearly with it) doesn't balloon
+    #                                     under a large total_budget on
+    #                                     marginal, likely-noise
+    #                                     "improvements." 0.0 restores the
+    #                                     old "register everything" behavior.
 
 
 # ===========================================================================
@@ -295,12 +363,73 @@ def _assign_pce_pairs(group_vars: list[str], n_qubits: int, k: int = 2) -> dict[
     return pairs
 
 
+def _min_qubits_for_group_size(size: int, k: int = 2) -> int:
+    """Smallest n_qubits such that C(n_qubits, k) >= size, i.e. the actual
+    minimum register needed to give ONE specific basis group enough
+    qubit-pairs for its variables -- independent of any assumption about
+    how evenly the three groups are split.
+
+    This exists because `reduce_qubits_with_pce(n_vars)` (from
+    quantum_discrete.py) computes its minimum assuming an EVEN three-way
+    split (n_vars/3 per group) -- which the old contiguous-thirds slicing
+    always satisfied by construction, but which the per-asset round-robin
+    grouping does NOT guarantee whenever n_assets isn't a multiple of 3
+    (e.g. 10 assets -> indices 0,3,6,9 land in group X, giving it 4 assets
+    while groups Y/Z get 3 each -- ~33% larger than the even-split
+    assumption). At "qubit overhead +0" (the bare PCE minimum, no slack),
+    that imbalance can leave the largest group without enough qubit-pairs,
+    raising the "couldn't be assigned a PCE qubit pair" error. Computing
+    the minimum from the ACTUAL largest group's size, post-assignment,
+    fixes this regardless of how n_assets/bits_per_asset happen to divide
+    across 3 groups."""
+    if size <= 0:
+        return 0
+    n = k
+    while math.comb(n, k) < size:
+        n += 1
+    return n
+
+
+def compute_pce_min_qubits(problem: PortfolioProblem, n_lots: int, pce_k: int = 2) -> int:
+    """Public helper: the TRUE minimum number of qubits this module's PCE
+    encoding needs for a given (problem, n_lots), matching exactly what
+    `PortfolioVQEPCESolver.__init__` computes and validates against
+    internally -- NOT `reduce_qubits_with_pce(n_vars)`'s even-split
+    estimate alone, which can understate the requirement whenever
+    n_assets isn't a multiple of 3 (see `_min_qubits_for_group_size`'s
+    docstring for why).
+
+    USE THIS in sweep/benchmark scripts instead of calling
+    `reduce_qubits_with_pce(n_vars)` directly to compute a "qubit overhead"
+    baseline. If a script computes its own baseline via the even-split
+    formula and then passes `n_qubits_override = that_baseline + overhead`
+    into VQEPCEConfig, the baseline itself can be wrong (too small)
+    whenever the per-asset grouping produces an uneven largest group --
+    which is exactly what caused the "couldn't be assigned a PCE qubit
+    pair" error: the solver's internal validation correctly caught that
+    the externally-computed baseline was stale, rather than silently
+    accepting an under-sized register.
+    """
+    encoding = build_lot_encoding(problem, n_lots)
+    n_vars = len(encoding.bit_vars)
+    if n_vars == 0:
+        return 0
+
+    group_sizes = [0, 0, 0]
+    for asset_idx, asset_bit_names in enumerate(encoding.asset_bits):
+        group_sizes[asset_idx % 3] += len(asset_bit_names)
+
+    evensplit_min = reduce_qubits_with_pce(n_vars)
+    actual_min = _min_qubits_for_group_size(max(group_sizes), pce_k)
+    return max(evensplit_min, actual_min)
+
+
 # ===========================================================================
 # 3. SOLVER
 # ===========================================================================
 
 class PortfolioVQEPCESolver:
-    """PCE-compressed register + adaptive-CVaR PSO->NFT sampling VQA for the
+    """PCE-compressed register + fixed-CVaR PSO->NFT sampling VQA for the
     discrete single-period portfolio problem. See module docstring for how
     this differs from both `quantum_discrete.py` (expectation-value PCE
     training) and `quantum_vqe_solver.py` (one qubit per lot-bit, no
@@ -311,26 +440,63 @@ class PortfolioVQEPCESolver:
         self.cfg = config or VQEPCEConfig()
 
         self.encoding = build_lot_encoding(problem, self.cfg.n_lots)
-        self.var_names = self.encoding.bit_vars
-        self.n_vars = len(self.var_names)
+        self.n_vars = len(self.encoding.bit_vars)
         if self.n_vars == 0:
             raise ValueError(
                 "All assets collapsed to a single feasible lot value "
                 "(lo == hi everywhere) -- nothing left to encode."
             )
 
-        third = self.n_vars // 3
-        self.group_x = self.var_names[:third]
-        self.group_y = self.var_names[third:2 * third]
-        self.group_z = self.var_names[2 * third:]
+        # NEW (see module docstring "UPDATED: group assignment is now
+        # per-asset"): each asset's ENTIRE bit list goes to a single basis
+        # group, round-robin over assets -- NOT a contiguous slice of the
+        # flattened bit-variable list. The old `third = n_vars // 3` slicing
+        # routinely split one asset's own lot-count bits across two
+        # different measurement bases, making even within-asset consistency
+        # depend on the cross-group independent-marginals approximation.
+        # Keeping each asset intact within one group means only CROSS-asset
+        # constraints (global budget sum, sector exposure) still depend on
+        # that approximation -- a strictly smaller error surface.
+        group_x: list[str] = []
+        group_y: list[str] = []
+        group_z: list[str] = []
+        groups = [group_x, group_y, group_z]
+        for asset_idx, asset_bit_names in enumerate(self.encoding.asset_bits):
+            groups[asset_idx % 3].extend(asset_bit_names)
+        self.group_x, self.group_y, self.group_z = group_x, group_y, group_z
 
-        pce_min_qubits = reduce_qubits_with_pce(self.n_vars)
+        # var_names must match the ACTUAL column order used everywhere else
+        # (bits_array = hstack([decoded_x, decoded_y, decoded_z])), which is
+        # now group_x + group_y + group_z in THIS order -- not
+        # self.encoding.bit_vars's original flattened order. Everything
+        # downstream (var_index / bit_weight_matrix / _row_to_dict /
+        # bit_flip_postprocess) is built FROM self.var_names, so as long as
+        # this assignment happens before those are built, they stay
+        # consistent automatically.
+        self.var_names = group_x + group_y + group_z
+
+        pce_min_qubits_evensplit = reduce_qubits_with_pce(self.n_vars)
+        max_group_size = max(len(group_x), len(group_y), len(group_z))
+        pce_min_qubits_actual = _min_qubits_for_group_size(max_group_size, self.cfg.pce_k)
+        # Same calculation as the public compute_pce_min_qubits() helper --
+        # done inline here too since we already have group_x/y/z built and
+        # don't need to rebuild the encoding a second time. If you're
+        # computing a qubit-overhead baseline OUTSIDE this class (e.g. in a
+        # sweep script), call compute_pce_min_qubits(problem, n_lots)
+        # instead of reduce_qubits_with_pce(n_vars) directly, so your
+        # baseline matches what this validation actually checks against.
+        pce_min_qubits = max(pce_min_qubits_evensplit, pce_min_qubits_actual)
+
         if self.cfg.n_qubits_override is not None:
             if self.cfg.n_qubits_override < pce_min_qubits:
                 raise ValueError(
                     f"n_qubits_override={self.cfg.n_qubits_override} is below "
                     f"the PCE minimum ({pce_min_qubits}) needed to fit "
-                    f"{self.n_vars} variables -- raise it or set it to None."
+                    f"{self.n_vars} variables across groups of sizes "
+                    f"{len(group_x)}/{len(group_y)}/{len(group_z)} (largest group "
+                    f"needs {pce_min_qubits_actual} qubits; the even-split estimate "
+                    f"alone was {pce_min_qubits_evensplit}) -- raise it or set it "
+                    "to None."
                 )
             self.n_qubits = self.cfg.n_qubits_override
         else:
@@ -345,16 +511,23 @@ class PortfolioVQEPCESolver:
             raise ValueError(
                 f"{len(missing)} variable(s) couldn't be assigned a PCE qubit "
                 f"pair (n_qubits={self.n_qubits} gives only {max_pairs} pairs "
-                "per basis group) -- increase n_qubits or reduce group size."
+                f"per basis group, but the largest group after per-asset "
+                f"assignment has {max(len(group_x), len(group_y), len(group_z))} "
+                "variables) -- increase n_qubits or reduce group size. NOTE: "
+                "per-asset grouping can make groups less evenly sized than the "
+                "old contiguous-thirds split did (it depends on how bits_per_asset "
+                "varies across assets), so this may trigger sooner than before "
+                "for very uneven asset bit-widths -- if so, raise "
+                "n_qubits_override rather than reverting the grouping change."
             )
 
         self.lot_lo, self.lot_hi = _lot_bounds(problem, self.cfg.n_lots)
 
         # bit_weight_matrix[a, j] = place-value weight of variable j if it's
         # one of asset a's lot-count bits, else 0. Column order == var_names
-        # order (== group_x + group_y + group_z, since those partition
-        # var_names contiguously) so it lines up directly with the decoded
-        # bit arrays built in sample_and_evaluate.
+        # order (== group_x + group_y + group_z, per the per-asset grouping
+        # above) so it lines up directly with the decoded bit arrays built
+        # in sample_and_evaluate.
         n_assets = problem.n_assets
         var_index = {v: i for i, v in enumerate(self.var_names)}
         self.bit_weight_matrix = np.zeros((n_assets, self.n_vars))
@@ -364,7 +537,6 @@ class PortfolioVQEPCESolver:
 
         self.pen_weight = self._calibrate_penalty()
 
-        
         self.ansatz = self._build_ansatz()
         self.n_params = self.ansatz.num_parameters
         self.simulator = AerSimulator()
@@ -400,7 +572,6 @@ class PortfolioVQEPCESolver:
                 qc.ry(theta[idx], q)
                 idx += 1
         return qc
-
 
     # -- decoding & cost ------------------------------------------------
     def _row_to_dict(self, row: np.ndarray) -> dict:
@@ -672,14 +843,22 @@ class PortfolioVQEPCESolver:
     def _validation_score(self, params: np.ndarray) -> float:
         """Consistent, tail-focused metric for comparing candidate thetas on
         equal footing -- always evaluated at alpha_min (regardless of
-        whichever alpha a given training step itself used), since PSO
-        trains at a fixed alpha_max=1.0 (average-cost) the whole time and
-        NFT's alpha only narrows gradually. Comparing two thetas using
-        whatever alpha each happened to be trained at isn't apples-to-
-        apples; this is. Used purely for elitism/best-so-far tracking in
-        run(), not for the training updates themselves."""
-        n_shots = self.shots_for_alpha(self.cfg.alpha_min)
-        return self.cvar_loss(params, self.cfg.alpha_min, n_shots)
+        whichever alpha a given training step itself used). With the fixed
+        CVaR schedule (alpha_max == alpha_min == 0.1), this is simply the
+        same fixed alpha PSO and NFT both trained at the whole time.
+        Comparing two thetas using whatever alpha each happened to be
+        trained at isn't apples-to-apples; this is. Used purely for
+        elitism/best-so-far tracking in run(), not for the training
+        updates themselves.
+
+        Deliberately uses the flat n0_shots baseline, NOT
+        shots_for_alpha(alpha_min) (a 10x-larger count at the default
+        alpha_min=0.1) -- called on every PSO gbest improvement and every
+        accepted NFT step, so it needs to actually be cheap, not merely
+        smaller than the one-time final audit. An earlier version used
+        the inflated count here, defeating the "cheap frequent check vs.
+        expensive one-time decision" asymmetry the whole design relies on."""
+        return self.cvar_loss(params, self.cfg.alpha_min, self.cfg.n0_shots)
 
     _MAX_AUDIT_CANDIDATES = 200
 
@@ -687,22 +866,27 @@ class PortfolioVQEPCESolver:
         """Called whenever PSO or NFT's own (cheaper, noisier, differently-
         scaled) internal criterion flags a new local best. Evaluates
         _validation_score once (still noisy, but at least on a consistent
-        metric) and appends to elite['candidates'] -- a POOL of "looked
-        good at some point during training" thetas, not a final decision.
+        metric); only ADDS to elite['candidates'] -- the POOL of "looked
+        good at some point during training" thetas -- if the improvement
+        over the current elite exceeds min_improvement_frac. Below that
+        margin, the "improvement" is treated as noise and ignored (elite
+        ['val']/'params' don't move either): without this filter, a large
+        total_budget lets the pool balloon with marginal, likely-noise
+        registrations, and audit_sec scales linearly with pool size.
         See module docstring's "winner's curse" note: the final decision
-        among this pool is deferred to _audit_best's single high-precision
-        tournament, specifically so that accumulating many cheap noisy
-        comparisons during training can't by itself crown a false winner.
-        Pool size is capped so audit cost stays bounded regardless of how
-        large total_budget is."""
+        among the pool is still deferred to _audit_best's single high-
+        precision tournament -- this only controls what's eligible to be
+        IN that tournament. Pool size is additionally capped so audit
+        cost stays bounded regardless of how large total_budget is."""
         val = self._validation_score(params)
         elite["evals"] = elite.get("evals", 0) + 1
-        if val < elite["val"]:
+        improvement_frac = (elite["val"] - val) / (abs(elite["val"]) + 1e-9)
+        if improvement_frac > self.cfg.min_improvement_frac:
             elite["val"] = val
             elite["params"] = params.copy()
-        elite["candidates"].append(params.copy())
-        if len(elite["candidates"]) > self._MAX_AUDIT_CANDIDATES:
-            elite["candidates"].pop(0)
+            elite["candidates"].append(params.copy())
+            if len(elite["candidates"]) > self._MAX_AUDIT_CANDIDATES:
+                elite["candidates"].pop(0)
 
     def _audit_best(self, candidates: list) -> np.ndarray:
         """The ONE decision that actually determines the returned theta.
@@ -716,8 +900,7 @@ class PortfolioVQEPCESolver:
         not more chances for noise to crown an impostor."""
         if len(candidates) == 1:
             return candidates[0]
-        n_shots = max(self.cfg.audit_shots, self.shots_for_alpha(self.cfg.alpha_min))
-        scores = [self.cvar_loss(p, self.cfg.alpha_min, n_shots) for p in candidates]
+        scores = [self.cvar_loss(p, self.cfg.alpha_min, self.cfg.audit_shots) for p in candidates]
         return candidates[int(np.argmin(scores))]
 
     def cvar_loss(self, params: np.ndarray, alpha: float, n_shots: int) -> float:
@@ -725,7 +908,7 @@ class PortfolioVQEPCESolver:
         k = max(1, int(np.ceil(alpha * len(costs))))
         return float(costs[:k].mean())
 
-    # -- adaptive CVaR schedule (identical to quantum_vqe_solver.py) --------
+    # -- fixed CVaR (paper: alpha = 0.1, no adaptive narrowing) --------------
     def adaptive_alpha(self, r: int) -> float:
         c = self.cfg
         return max(c.alpha_min, c.alpha_max - c.delta_alpha * (r // c.l_alpha))
@@ -791,6 +974,18 @@ class PortfolioVQEPCESolver:
         pbest, pbest_cost = pos.copy(), np.full(n, np.inf)
         gbest, gbest_cost = pos[0].copy(), np.inf
 
+        # cost_window below gets ONE entry per PSO *generation* (a full
+        # sweep of all n particles), but c.stagnation_window is specified
+        # in raw objective-function *evaluations* (paper: "sliding window
+        # of 100 evaluations") -- comparing len(cost_window) directly
+        # against c.stagnation_window would silently treat "100" as 100
+        # generations = 100*n_particles evaluations, which at n=20 is 2000
+        # evaluations, far above max_pso_budget (600). That would make the
+        # stagnation check unreachable -- PSO would always burn its full
+        # budget_cap and never stop early. Convert to generations here so
+        # the config field's stated unit (evaluations) is honored.
+        window_gens = max(1, c.stagnation_window // n)
+
         evals_used = 0
         cost_window: list[float] = []
         while evals_used < budget_cap:
@@ -815,8 +1010,8 @@ class PortfolioVQEPCESolver:
             vel = np.clip(vel, -v_max, v_max)
             pos = (pos + vel) % (2 * np.pi)
 
-            if evals_used >= c.min_pso_budget and len(cost_window) >= c.stagnation_window:
-                window = cost_window[-c.stagnation_window:]
+            if evals_used >= c.min_pso_budget and len(cost_window) >= window_gens:
+                window = cost_window[-window_gens:]
                 rel_imp = (window[0] - window[-1]) / (abs(window[0]) + 1e-8)
                 if rel_imp < c.stagnation_tol:
                     break
@@ -861,7 +1056,10 @@ class PortfolioVQEPCESolver:
                 "candidates": [init_params.copy()],
             }
 
-            pso_budget = min(c.max_pso_budget, c.total_budget)
+            pso_budget = min(
+                c.max_pso_budget,
+                max(int(c.total_budget * (1 - c.nft_reserve_fraction)), 0),
+            )
             pso_log = []
             best_pso_params, pso_evals = self.run_pso(
                 init_params, pso_log, budget_cap=pso_budget, elite=elite
@@ -870,6 +1068,22 @@ class PortfolioVQEPCESolver:
             nft_budget = max(c.total_budget - pso_evals, 0)
             nft_log = []
             _, nft_evals = self.run_nft(best_pso_params, nft_budget, nft_log, elite=elite)
+
+            # Diagnostic: did NFT actually reach alpha_min, or did it run
+            # out of budget partway through the schedule? A nonzero NFT
+            # budget doesn't by itself guarantee the schedule completes --
+            # see quantum_vqe_solver.py's identical diagnostic.
+            coord_updates_done = nft_evals // 3
+            steps_needed = int(np.ceil((c.alpha_max - c.alpha_min) / c.delta_alpha))
+            coord_updates_needed = steps_needed * c.l_alpha
+            alpha_reached = self.adaptive_alpha(coord_updates_done) if coord_updates_done else c.alpha_max
+            print(
+                f"NFT schedule: {coord_updates_done}/{coord_updates_needed} coordinate "
+                f"updates completed, reached alpha={alpha_reached:.3f} "
+                f"(target alpha_min={c.alpha_min})"
+                + ("  -- FULLY reached alpha_min." if coord_updates_done >= coord_updates_needed
+                   else "  -- did NOT reach alpha_min; narrowing was cut short by budget.")
+            )
 
             # The actual decision: a single low-noise audit across every
             # candidate that looked good at some point during training --
