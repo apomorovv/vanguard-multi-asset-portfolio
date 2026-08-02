@@ -3,10 +3,14 @@ problem:
   n_assets: 2000
   n_groups: 10
   n_factors: 12
+  # Start from a realistic sparse incumbent instead of liquidating a
+  # 2,000-name equal-weight portfolio into 50 holdings (195% L1 turnover).
+  current_cardinality: 50
   seed: 20260802
   overrides:
     target_return: null
-    max_turnover: null
+    # L1 turnover: 40% equals 20% under the common one-way convention.
+    max_turnover: 0.40
 
 preferences:
   preset: balanced
@@ -24,7 +28,10 @@ hybrid:
   held_fraction: 0.45
   allocation_backend: osqp
   allocation_options:
-    tol: 1.0e-7
+    # Keep the solver residual comfortably below the independent 1e-7
+    # feasibility threshold.  At 2,000 assets, eps=1e-7 can leave bound
+    # residuals just above that threshold even when OSQP reports "solved".
+    tol: 1.0e-8
     max_iter: 500000
   initial_trials: 500
   initial_milp_time_limit: 60
@@ -38,7 +45,7 @@ hybrid:
   maximum_quantum_edges: 60
   run_gurobi_reference: true
   gurobi_time_limit: 600
-  gurobi_mip_gap: 1.0e-2
+  gurobi_mip_gap: 1.0e-3
   seed: 20260802
   quantum:
     depth: 1
