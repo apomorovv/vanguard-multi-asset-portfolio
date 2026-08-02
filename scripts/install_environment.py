@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Install the project with the correct Qiskit Aer build for this machine.
+"""Install the project with a Qiskit Aer build compatible with this machine.
 
-The standard ``qiskit-aer`` distribution is CPU-only. Qiskit publishes
-separate GPU distributions for CUDA 12+ and CUDA 11 on x86_64 Linux. Static
-Python extras cannot inspect the host GPU, so this script performs that
-selection before invoking pip and verifies that Aer can actually see the GPU.
+The CPU, CUDA 12, and CUDA 11 Aer distributions are separate packages. The
+CUDA 12 wheel currently remains at Aer 0.15.1 and must be paired with Qiskit
+1.4.x because Qiskit 2.0 removed an API imported by that Aer Python layer.
+This script detects the machine, installs a known-compatible package set, and
+executes a real Aer job to verify the selected backend.
 """
 
 from __future__ import annotations
@@ -26,12 +27,14 @@ AER_DISTRIBUTIONS = (
     "qiskit-aer-gpu",
     "qiskit-aer-gpu-cu11",
 )
+QISKIT_DISTRIBUTIONS = ("qiskit", "qiskit-terra")
 
 
 @dataclass(frozen=True)
 class AcceleratorChoice:
     extra: str
     aer_distribution: str
+    qiskit_requirement: str
     expect_gpu: bool
     reason: str
     cuda_major: int | None = None
@@ -50,25 +53,28 @@ def choose_accelerator(
     nvidia_smi_output: str | None,
     force_cpu: bool = False,
 ) -> AcceleratorChoice:
-    """Choose the compatible project extra and Aer distribution."""
+    """Choose a compatible project extra and Qiskit/Aer pair."""
     if force_cpu:
         return AcceleratorChoice(
             extra="quantum-cpu",
-            aer_distribution="qiskit-aer>=0.17",
+            aer_distribution="qiskit-aer==0.17.2",
+            qiskit_requirement="qiskit>=2.0,<3",
             expect_gpu=False,
             reason="CPU installation was explicitly requested",
         )
     if system != "Linux" or machine not in {"x86_64", "amd64"}:
         return AcceleratorChoice(
             extra="quantum-cpu",
-            aer_distribution="qiskit-aer>=0.17",
+            aer_distribution="qiskit-aer==0.17.2",
+            qiskit_requirement="qiskit>=2.0,<3",
             expect_gpu=False,
             reason="prebuilt Aer GPU wheels require x86_64 Linux",
         )
     if not nvidia_smi_output:
         return AcceleratorChoice(
             extra="quantum-cpu",
-            aer_distribution="qiskit-aer>=0.17",
+            aer_distribution="qiskit-aer==0.17.2",
+            qiskit_requirement="qiskit>=2.0,<3",
             expect_gpu=False,
             reason="no working NVIDIA GPU was detected with nvidia-smi",
         )
@@ -77,32 +83,36 @@ def choose_accelerator(
     if cuda_major is None:
         return AcceleratorChoice(
             extra="quantum-cpu",
-            aer_distribution="qiskit-aer>=0.17",
+            aer_distribution="qiskit-aer==0.17.2",
+            qiskit_requirement="qiskit>=2.0,<3",
             expect_gpu=False,
             reason="nvidia-smi did not report a CUDA compatibility version",
         )
     if cuda_major >= 12:
         return AcceleratorChoice(
             extra="quantum-gpu",
-            aer_distribution="qiskit-aer-gpu>=0.15.1",
+            aer_distribution="qiskit-aer-gpu==0.15.1",
+            qiskit_requirement="qiskit==1.4.6",
             expect_gpu=True,
             reason=(
                 f"NVIDIA driver reports CUDA {cuda_major}; selecting Aer's CUDA 12 "
-                "GPU wheel because newer NVIDIA drivers are backward compatible"
+                "wheel and its required Qiskit 1.4 compatibility line"
             ),
             cuda_major=cuda_major,
         )
     if cuda_major == 11:
         return AcceleratorChoice(
             extra="quantum-gpu-cu11",
-            aer_distribution="qiskit-aer-gpu-cu11>=0.17",
+            aer_distribution="qiskit-aer-gpu-cu11==0.17.2",
+            qiskit_requirement="qiskit>=2.0,<3",
             expect_gpu=True,
-            reason="NVIDIA driver reports CUDA 11; selecting Aer's CUDA 11 GPU wheel",
+            reason="NVIDIA driver reports CUDA 11; selecting current CUDA 11 Aer",
             cuda_major=cuda_major,
         )
     return AcceleratorChoice(
         extra="quantum-cpu",
-        aer_distribution="qiskit-aer>=0.17",
+        aer_distribution="qiskit-aer==0.17.2",
+        qiskit_requirement="qiskit>=2.0,<3",
         expect_gpu=False,
         reason=f"CUDA {cuda_major} is older than the supported prebuilt GPU wheels",
         cuda_major=cuda_major,
@@ -143,34 +153,65 @@ def run_command(command: Sequence[str], *, dry_run: bool) -> None:
 
 
 def verify_aer(*, expect_gpu: bool, dry_run: bool) -> None:
+    """Verify import, device discovery, and one real simulator execution."""
     if dry_run:
         return
     code = r'''
 import os
 from importlib import metadata
-from qiskit_aer import AerSimulator
 
-names = ("qiskit-aer", "qiskit-aer-gpu", "qiskit-aer-gpu-cu11")
+names = (
+    "qiskit",
+    "qiskit-terra",
+    "qiskit-aer",
+    "qiskit-aer-gpu",
+    "qiskit-aer-gpu-cu11",
+    "qiskit-ibm-runtime",
+)
 installed = {}
 for name in names:
     try:
         installed[name] = metadata.version(name)
     except metadata.PackageNotFoundError:
         pass
+print("Installed Qiskit distributions:", installed)
+
+try:
+    from qiskit import QuantumCircuit, transpile
+    from qiskit_aer import AerSimulator
+except Exception as exc:
+    raise SystemExit(
+        "Qiskit Aer import failed after installation. This usually means an "
+        f"incompatible or stale Qiskit/Aer pair remains: {exc}"
+    ) from exc
 
 devices = tuple(AerSimulator().available_devices())
-print("Installed Aer distributions:", installed)
 print("Aer available devices:", devices)
-if os.environ.get("VANGUARD_EXPECT_AER_GPU") == "1" and "GPU" not in devices:
+expect_gpu = os.environ.get("VANGUARD_EXPECT_AER_GPU") == "1"
+if expect_gpu and "GPU" not in devices:
     raise SystemExit(
-        "A GPU Aer package was selected, but Aer still reports no GPU device. "
-        "Check CUDA runtime libraries, then rerun. Use --force-cpu only when "
-        "CPU execution is intentional."
+        "A GPU Aer package was selected, but Aer reports no GPU device. "
+        "Check CUDA runtime libraries and LD_LIBRARY_PATH."
     )
+
+device = "GPU" if expect_gpu else "CPU"
+simulator = AerSimulator(method="statevector", device=device)
+circuit = QuantumCircuit(2)
+circuit.h(0)
+circuit.cx(0, 1)
+circuit.measure_all()
+compiled = transpile(circuit, simulator, optimization_level=0)
+result = simulator.run(compiled, shots=128, seed_simulator=7).result()
+if not result.success:
+    raise SystemExit(f"Aer {device} verification job failed: {result.status}")
+counts = result.get_counts()
+if sum(counts.values()) != 128:
+    raise SystemExit(f"Aer verification returned an unexpected shot count: {counts}")
+print(f"Aer {device} verification counts:", counts)
 '''
     env = os.environ.copy()
     env["VANGUARD_EXPECT_AER_GPU"] = "1" if expect_gpu else "0"
-    print("+ verifying qiskit_aer device discovery", flush=True)
+    print("+ verifying Qiskit/Aer import and simulator execution", flush=True)
     subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
@@ -185,12 +226,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force-cpu",
         action="store_true",
-        help="install the CPU Aer wheel even when an NVIDIA GPU is present",
+        help="install CPU Aer even when an NVIDIA GPU is present",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the selected packages and commands without changing the environment",
+        help="print package choices and commands without changing the environment",
     )
     return parser
 
@@ -210,14 +251,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     extra = project_extra(args.profile, choice)
 
     print(f"Platform: {platform.system()} {platform.machine()}")
-    print(f"Selection: {choice.aer_distribution}")
+    print(f"Qiskit selection: {choice.qiskit_requirement}")
+    print(f"Aer selection: {choice.aer_distribution}")
     print(f"Reason: {choice.reason}")
     print(f"Project extra: {extra}")
 
-    # CPU and GPU Aer wheels install the same qiskit_aer import package. Remove
-    # all variants first so stale files or metadata cannot mask the selection.
+    # Aer variants install the same qiskit_aer import tree. Qiskit 1.x and 2.x
+    # also replace the same package tree, so remove both before reinstalling.
     run_command(
-        [sys.executable, "-m", "pip", "uninstall", "-y", *AER_DISTRIBUTIONS],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "uninstall",
+            "-y",
+            *AER_DISTRIBUTIONS,
+            *QISKIT_DISTRIBUTIONS,
+        ],
         dry_run=args.dry_run,
     )
     run_command(
@@ -231,6 +281,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "-e",
             f"{root}[{extra}]",
         ],
+        dry_run=args.dry_run,
+    )
+    run_command(
+        [sys.executable, "-m", "pip", "check"],
         dry_run=args.dry_run,
     )
     verify_aer(expect_gpu=choice.expect_gpu, dry_run=args.dry_run)
