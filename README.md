@@ -1,22 +1,16 @@
 # Constraint-Safe Hybrid Portfolio Optimization
 
-This repository studies sparse, long-only multi-asset portfolio optimization
-with classical and quantum-guided neighborhood search. The full financial
-model remains classical: a factor quadratic program assigns continuous
-weights, an allocation oracle enforces hard constraints, and an independent
-validator checks every accepted portfolio. XY-QAOA proposes support changes
-inside a small fixed-cardinality window.
+This project combines a scalable factor-risk classical
+optimizer with classical large-neighborhood search and fixed-cardinality
+XY-QAOA. Every candidate support is assigned exact continuous percentages by a
+classical allocation oracle and independently checked before it can become the
+recommended portfolio.
 
-The implementation is designed to answer three separate questions without
-conflating them:
+The central claim:
 
-1. How quickly can a valid, high-quality sparse portfolio be found?
-2. How close is that portfolio to a continuous lower bound or a Gurobi bound?
-3. Does the quantum window generator preserve cardinality and produce useful
-   candidate supports?
-
-No quantum-speedup claim is made. CPU, GPU, QPU, and solver time are recorded
-separately so the evidence can be interpreted directly.
+> Quantum computing proposes asset swaps inside a small adaptive window.
+> Classical optimization assigns percentages, enforces every financial
+> guardrail, and supplies the final answer and optimality evidence.
 
 ## Architecture
 
@@ -32,54 +26,47 @@ flowchart TD
     C --> H["Optional Gurobi bound"]
 ```
 
-The quantum circuit never produces final portfolio weights. It samples asset
-supports; every support returns to the same continuous allocation model and
-validator used by the classical search.
+The quantum circuit samples asset supports; every support returns to the same 
+continuous allocation model and validator used by the classical search.
 
 ## Optimization model
 
-For weights \(w\), support variables \(z\), current weights \(w^0\), and
-transaction-cost auxiliaries \(t\), the canonical objective is
+# Portfolio Optimization and XY-QAOA Formulation
 
-\[
-\min\; \lambda_r w^T\Sigma w
--\lambda_g\mu^T w
--\lambda_y y^T w
-+\lambda_c c^Tt.
-\]
+## Canonical Objective Function
 
-The benchmark normally enforces
+For weights $w$, support variables $z$, current weights $w^0$, and transaction-cost auxiliaries $t$, the canonical objective is:
 
-\[
-\mathbf 1^T w=1,\qquad
-m_i z_i\le w_i\le u_i z_i,\qquad
-\sum_i z_i=K,
-\]
+$$ \min\; \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt $$
 
-together with group bounds and a turnover cap. Eligibility, mandatory
-holdings, income, factor exposure, stress-return, and empirical-CVaR limits are
-available when the data support them.
+## Benchmark Constraints
 
-Generated large instances use
+The benchmark normally enforces the following conditions:
 
-\[
-\Sigma=B\Omega B^T+D.
-\]
+$$ \mathbf 1^T w=1,\qquad m_i z_i\le w_i\le u_i z_i,\qquad \sum_i z_i=K $$
 
-The solver evaluates risk from \(B\), \(\Omega\), and diagonal \(D\); it does
-not need to materialize an \(n\times n\) covariance matrix. This changes
-storage from quadratic in the number of assets to \(O(nk)\), where \(k\) is
-the number of factors.
+*   **Group Bounds & Turnover:** Enforced alongside a standard turnover cap.
+*   **Advanced Limits:** Eligibility, mandatory holdings, income, factor exposure, stress-return, and empirical-CVaR limits are available when data supports them.
 
-Inside an \(F\)-asset change window, XY-QAOA solves a surrogate support problem
+## Covariance Matrix Factorization
 
-\[
-\min_{x\in\{0,1\}^F} x^TQx+h^Tx,
-\qquad \sum_i x_i=r.
-\]
+Generated large instances use a factor model structure:
 
-The XY mixer exchanges `10` and `01`. Starting from an \(r\)-asset bitstring
-therefore preserves the number of selected window assets in ideal execution.
+$$ \Sigma=B\Omega B^T+D $$
+
+*   **Risk Evaluation:** The solver evaluates risk directly from $B$, $\Omega$, and diagonal $D$.
+*   **Memory Efficiency:** It does not materialize a full $n \times n$ covariance matrix.
+*   **Complexity Reduction:** Storage scales linearly at $\mathcal{O}(nk)$ instead of quadratically, where $k$ is the number of factors.
+
+## Quantum Optimization Surrogate (XY-QAOA)
+
+Inside an $F$-asset change window, XY-QAOA solves a surrogate support problem:
+
+$$ \min_{x\in\{0,1\}^F} x^TQx+h^Tx, \qquad \sum_i x_i=r $$
+
+*   **XY Mixer Function:** Exchanges `10` and `01` bit pairs.
+*   **Subspace Preservation:** Starting from an $r$-asset bitstring preserves the exact number of selected window assets under ideal execution.
+
 
 ## What is implemented
 
@@ -169,9 +156,9 @@ writes runtime, quality, feasibility, memory, and quantum timing plots:
 
 ```bash
 python scripts/run_hybrid_scaling.py \
-  --quantum-backend aer_gpu \
-  --output results/hybrid_scaling \
-  --overwrite
+  --quantum \
+  --aer-gpu \
+  --output results/hybrid_scaling
 ```
 
 Default sizes are 250, 500, 1,000, 2,000, 5,000, 10,000, and 20,000 assets.
