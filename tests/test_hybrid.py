@@ -14,6 +14,7 @@ from vanguard_portfolio.allocation import (
     solve_relaxation,
 )
 from vanguard_portfolio.data_generation import (
+    generate_factor_universe,
     generate_return_scenarios,
     generate_synthetic_universe,
 )
@@ -24,8 +25,13 @@ from vanguard_portfolio.schemas import (
     PortfolioConstraints,
     PortfolioProblem,
     Preferences,
+    SolverUnavailableError,
 )
 from vanguard_portfolio.validation import validate_weights
+from vanguard_portfolio.window_search import (
+    binding_group_pressure,
+    construct_change_window,
+)
 
 
 class HybridTests(unittest.TestCase):
@@ -122,6 +128,34 @@ class HybridTests(unittest.TestCase):
             "scipy_highs_feasibility_milp",
         )
 
+    def test_large_osqp_relaxation_clears_independent_validation(self) -> None:
+        problem = generate_factor_universe(
+            n_assets=2_000,
+            n_groups=10,
+            n_factors=12,
+            seed=20260802,
+        )
+        constraints = PortfolioConstraints(
+            exact_cardinality=50,
+            minimum_active_weight=0.005,
+            maximum_weights=np.full(problem.n, 0.04),
+        )
+        try:
+            result = solve_relaxation(
+                problem,
+                Preferences(lambda_income=0.5),
+                constraints,
+                backend="osqp",
+                solver_options={"tol": 1e-8, "max_iter": 500_000},
+            )
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+        self.assertEqual(result.status.lower(), "solved")
+        self.assertTrue(result.success, result.metadata)
+        self.assertTrue(result.feasible)
+        self.assertEqual(result.breaches, 0)
+        self.assertLessEqual(result.max_violation, 1e-7)
+
     def test_complete_hybrid_run_has_zero_breaches(self) -> None:
         config = HybridConfig(
             iterations=1,
@@ -143,6 +177,14 @@ class HybridTests(unittest.TestCase):
         self.assertEqual(run.best.breaches, 0)
         self.assertEqual(np.count_nonzero(run.best.weights > 1e-8), 4)
         self.assertTrue(any("xy_qaoa" in result.method for result in run.results))
+        self.assertFalse(run.initial.optimal)
+        self.assertTrue(
+            all(
+                not result.optimal
+                for result in run.results
+                if result.model_type == "hybrid_sparse"
+            )
+        )
 
         realized = np.random.default_rng(4).multivariate_normal(
             self.problem.mu / 12, self.problem.cov / 12, size=24
@@ -162,6 +204,49 @@ class HybridTests(unittest.TestCase):
                 constraint_rows = list(csv.DictReader(handle))
             self.assertTrue(constraint_rows)
             self.assertTrue(all(row["passed"] == "True" for row in constraint_rows))
+
+    def test_change_windows_are_group_diverse_and_rotate_unheld_assets(self) -> None:
+        problem = generate_factor_universe(
+            n_assets=60,
+            n_groups=6,
+            n_factors=8,
+            seed=29,
+            current_cardinality=12,
+        )
+        constraints = PortfolioConstraints(
+            exact_cardinality=12,
+            minimum_active_weight=0.01,
+            maximum_weights=np.full(problem.n, 0.15),
+        )
+        pressure = binding_group_pressure(problem, problem.w0)
+        np.testing.assert_allclose(pressure, 0.0)
+        communities = np.asarray(problem.asset_group, dtype=int)
+        first = construct_change_window(
+            problem,
+            Preferences(),
+            constraints,
+            problem.w0,
+            np.full(problem.n, 1.0 / problem.n),
+            window_size=10,
+            held_fraction=0.5,
+            community_labels=communities,
+        )
+        first_groups = {
+            problem.asset_group[index] for index in first.promising_unheld
+        }
+        self.assertEqual(len(first_groups), len(first.promising_unheld))
+        second = construct_change_window(
+            problem,
+            Preferences(),
+            constraints,
+            problem.w0,
+            np.full(problem.n, 1.0 / problem.n),
+            window_size=10,
+            held_fraction=0.5,
+            community_labels=communities,
+            excluded_unheld=first.promising_unheld,
+        )
+        self.assertTrue(set(first.promising_unheld).isdisjoint(second.promising_unheld))
 
 
 if __name__ == "__main__":
