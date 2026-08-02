@@ -11,7 +11,7 @@ venv/
 .idea/
 .vscode/
 
-# Generated experiment outputs (keep README and the committed example data).
+# Generated experiment outputs (keep only the directory guide).
 results/**
 !results/README.md
 runs/

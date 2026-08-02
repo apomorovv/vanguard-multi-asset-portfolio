@@ -160,7 +160,7 @@ Quantum simulator and Copilot:
 python -m pip install -e ".[quantum,app,test]"
 ```
 
-Everything, including IBM Runtime and Gurobi's Python package:
+Portable CPU simulator, IBM Runtime, and Gurobi's Python package:
 
 ```bash
 python -m pip install -e ".[full]"
@@ -169,6 +169,18 @@ python -m pip install -e ".[full]"
 Gurobi still requires a separate valid license. IBM Runtime uses the account
 configuration managed by `qiskit-ibm-runtime`; credentials are never stored in
 the repository.
+
+For an NVIDIA machine, use the compatibility-aware installer:
+
+```bash
+python scripts/install_environment.py --profile full
+```
+
+The CUDA 12 Aer wheel requires Qiskit 1.4, while current IBM Runtime requires
+Qiskit 2.x. The installer keeps both GPU simulator profiles isolated from IBM
+Runtime packages so later dependency upgrades cannot silently replace Aer.
+Keep IBM hardware access in a separate environment; see
+`docs/gpu_installation.md`.
 
 ## Run in increasing order of difficulty
 
@@ -202,9 +214,10 @@ python scripts/run_hybrid.py \
 
 ### 2,000-asset scale run on the server
 
-Install OSQP and Qiskit Aer with GPU support, then run:
+Install the detected Qiskit Aer build and the classical stack, then run:
 
 ```bash
+python scripts/install_environment.py --profile full
 python scripts/run_hybrid.py \
   --config configs/large_hybrid.yaml \
   --overwrite
@@ -241,10 +254,14 @@ validated; infeasible combinations are reported instead of silently relaxed.
 | Final 8-16 qubit demonstration | IBM QPU through Runtime |
 | Copilot and plots | CPU |
 
-`quantum.backend: subspace` is the portable deterministic reference.
-`aer_gpu` uses the Qiskit circuit and the GPU. If the installed Aer build accepts
-the GPU request but cannot execute it, the runner records the reason and
-automatically retries Aer CPU so the quantum comparison is not silently lost.
+`quantum.backend: subspace` is the portable deterministic reference. For every
+backend, QAOA angles are optimized efficiently in the exact fixed-weight CPU
+subspace. `aer_gpu` then compiles and samples the equivalent Qiskit circuit on
+the GPU. At 16 qubits this is faster than launching dozens of small GPU jobs
+during COBYLA and makes the hardware boundary auditable. The result records the
+requested backend, actual execution device, verification method, and phase
+timings. If GPU execution fails, the runner records the reason and retries Aer
+CPU so the quantum comparison is not silently lost.
 `ibm_runtime` requires an explicit backend name and is reserved for selected
 final windows. Backend calibration should be checked on the run date; no
 processor is hardcoded.
@@ -265,8 +282,9 @@ oracle, and validator.
 
 Report objective versus time, time to first valid portfolio, full feasibility,
 oracle calls, duplicate supports, Gurobi bound/gap/nodes, quantum cardinality
-rate, qubits, shots, transpiled depth/two-qubit gates, and out-of-sample risk,
-return, CVaR, drawdown, and turnover.
+rate, qubits, shots, actual simulator device, CPU/GPU phase timings, transpiled
+depth/two-qubit gates, and out-of-sample risk, return, CVaR, drawdown, and
+turnover.
 
 `optimal` refers to global model status. A hybrid support is reported as a
 feasible incumbent even when its conditional fixed-support allocation QP is
@@ -283,13 +301,14 @@ Each hybrid run writes:
 - `change_windows.csv`;
 - `objective_timeline.csv`;
 - `backtest_summary.csv`;
+- `quantum_execution.csv` with sampler-device proof and phase timings;
 - `hybrid_diagnostics.json`;
 - `problem.json`;
 - `hybrid_report.md`;
 - `artifact_manifest.json` with SHA-256 checksums;
 - matched PNG and PDF plots for architecture, allocations, risk-return,
   objective/runtime, anytime convergence, constraints, groups, factors,
-  quantum cardinality, circuit resources, communities, and backtesting.
+  quantum cardinality, circuit resources/timings, communities, and backtesting.
 
 Never present a plot without the matching tables, configuration, validator
 output, and checksums.

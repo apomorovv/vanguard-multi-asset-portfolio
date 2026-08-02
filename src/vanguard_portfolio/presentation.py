@@ -36,8 +36,8 @@ def _label(method: str) -> str:
         "classical_enumeration": "Classical exact window",
         "classical_tabu_lns": "Classical tabu/LNS",
         "xy_qaoa_subspace": "XY-QAOA",
-        "xy_qaoa_aer_gpu": "XY-QAOA (Aer GPU)",
-        "xy_qaoa_aer_cpu": "XY-QAOA (Aer CPU)",
+        "xy_qaoa_aer_gpu": "XY-QAOA (Aer GPU sample)",
+        "xy_qaoa_aer_cpu": "XY-QAOA (Aer CPU sample)",
         "penalty_qaoa_statevector": "Penalty QAOA",
         "gurobi_cardinality_miqp": "Gurobi MIQP",
         "scipy_slsqp": "Continuous relaxation",
@@ -66,6 +66,77 @@ def _unique_method_labels(methods: Iterable[str]) -> list[str]:
         seen[name] = seen.get(name, 0) + 1
         labels.append(f"{name} (window {seen[name]})" if totals[name] > 1 else name)
     return labels
+
+
+def _quantum_execution_rows(run: HybridRun) -> list[dict[str, Any]]:
+    """Flatten quantum correctness, device, resource, and timing evidence."""
+    rows: list[dict[str, Any]] = []
+    for iteration, search in enumerate(run.quantum_searches):
+        metadata = search.metadata
+        rows.append(
+            {
+                "iteration": metadata.get("iteration", iteration),
+                "method": search.method,
+                "parameter_optimizer_backend": metadata.get(
+                    "parameter_optimizer_backend", ""
+                ),
+                "requested_sampler_backend": metadata.get("requested_backend", ""),
+                "actual_sampler_backend": metadata.get("backend", ""),
+                "execution_device": metadata.get("execution_device", ""),
+                "gpu_accelerated": metadata.get("gpu_accelerated", False),
+                "device_verification": metadata.get("device_verification", ""),
+                "fallback_reason": metadata.get("fallback_reason", ""),
+                "qubits": metadata.get("qubits", ""),
+                "required_ones": metadata.get("required_ones", ""),
+                "subspace_states": metadata.get(
+                    "subspace_states", metadata.get("state_count", "")
+                ),
+                "depth_p": metadata.get("depth_p", ""),
+                "shots": metadata.get("shots", ""),
+                "optimizer_evaluations": metadata.get("optimizer_evaluations", ""),
+                "unique_sampled_bitstrings": metadata.get(
+                    "unique_sampled_bitstrings", len(search.counts)
+                ),
+                "cardinality_feasibility_rate": search.cardinality_feasibility_rate,
+                "exact_expected_surrogate_energy": search.expected_surrogate_energy,
+                "sampled_expected_surrogate_energy": metadata.get(
+                    "sampled_expected_surrogate_energy", ""
+                ),
+                "best_sampled_energy": search.best_sampled_energy,
+                "logical_two_qubit_gates": metadata.get("logical_two_qubit_gates", ""),
+                "transpiled_two_qubit_gates": metadata.get(
+                    "transpiled_two_qubit_gates", ""
+                ),
+                "transpiled_depth": metadata.get("transpiled_depth", ""),
+                "preprocessing_seconds": metadata.get("preprocessing_seconds", 0.0),
+                "angle_optimization_seconds": metadata.get(
+                    "angle_optimization_seconds", 0.0
+                ),
+                "circuit_build_seconds": metadata.get("circuit_build_seconds", 0.0),
+                "simulator_setup_seconds": metadata.get(
+                    "simulator_setup_seconds", 0.0
+                ),
+                "transpile_seconds": metadata.get("transpile_seconds", 0.0),
+                "sampling_seconds": metadata.get(
+                    "simulation_seconds",
+                    metadata.get("subspace_sampling_seconds", 0.0),
+                ),
+                "count_decode_seconds": metadata.get("count_decode_seconds", 0.0),
+                "candidate_ranking_seconds": metadata.get(
+                    "candidate_ranking_seconds", 0.0
+                ),
+                "allocation_oracle_seconds": metadata.get(
+                    "allocation_oracle_seconds", 0.0
+                ),
+                "window_end_to_end_seconds": metadata.get(
+                    "window_end_to_end_seconds", search.runtime
+                ),
+                "evaluated_supports": metadata.get("evaluated_supports", ""),
+                "feasible_supports": metadata.get("feasible_supports", ""),
+                "duplicate_supports": metadata.get("duplicate_supports", ""),
+            }
+        )
+    return rows
 
 
 def _save(fig: plt.Figure, path: Path) -> dict[str, Path]:
@@ -476,6 +547,69 @@ def plot_quantum_resources(run: HybridRun, path: Path) -> dict[str, Path]:
     return _save(fig, path)
 
 
+def plot_quantum_timing(run: HybridRun, path: Path) -> dict[str, Path]:
+    """Show which XY-QAOA phases use the CPU, simulator backend, and oracle."""
+    if not run.quantum_searches:
+        return {}
+    labels = _unique_method_labels(search.method for search in run.quantum_searches)
+    rows = _quantum_execution_rows(run)
+    phases = [
+        (
+            "CPU subspace setup",
+            np.asarray([float(row["preprocessing_seconds"]) for row in rows]),
+            "#5C677D",
+        ),
+        (
+            "CPU angle optimization",
+            np.asarray([float(row["angle_optimization_seconds"]) for row in rows]),
+            "#0B5CAD",
+        ),
+        (
+            "Circuit build + compile",
+            np.asarray(
+                [
+                    float(row["circuit_build_seconds"])
+                    + float(row["simulator_setup_seconds"])
+                    + float(row["transpile_seconds"])
+                    for row in rows
+                ]
+            ),
+            "#7B61A8",
+        ),
+        (
+            "Backend sampling",
+            np.asarray(
+                [
+                    float(row["sampling_seconds"])
+                    + float(row["count_decode_seconds"])
+                    + float(row["candidate_ranking_seconds"])
+                    for row in rows
+                ]
+            ),
+            "#00A6A6",
+        ),
+        (
+            "Classical allocation oracle",
+            np.asarray([float(row["allocation_oracle_seconds"]) for row in rows]),
+            "#F28E2B",
+        ),
+    ]
+    x = np.arange(len(labels))
+    bottom = np.zeros(len(labels))
+    fig, ax = plt.subplots(figsize=(max(8.0, len(labels) * 1.7), 4.8))
+    for name, values, color in phases:
+        ax.bar(x, values, bottom=bottom, label=name, color=color)
+        bottom += values
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=25, ha="right")
+    ax.set_ylabel("Seconds")
+    ax.set_title("Quantum-search end-to-end phase timing")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(frameon=False, fontsize=8, ncol=2)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
 def plot_correlation_communities(run: HybridRun, path: Path) -> dict[str, Path]:
     labels = market_communities(run.problem, seed=run.config.seed)
     display_limit = min(250, run.problem.n)
@@ -609,6 +743,13 @@ def write_hybrid_artifacts(
             )
     artifacts["windows"] = _write_csv(output / "change_windows.csv", window_rows)
 
+    quantum_execution_rows = _quantum_execution_rows(run)
+    if quantum_execution_rows:
+        artifacts["quantum_execution"] = _write_csv(
+            output / "quantum_execution.csv",
+            quantum_execution_rows,
+        )
+
     if realized_returns is not None:
         rows = []
         for result in _best_methods([run.initial, *run.results]):
@@ -636,6 +777,8 @@ def write_hybrid_artifacts(
                 "angles": search.angles,
                 "runtime": search.runtime,
                 "cardinality_feasibility_rate": search.cardinality_feasibility_rate,
+                "expected_surrogate_energy": search.expected_surrogate_energy,
+                "best_sampled_energy": search.best_sampled_energy,
                 "metadata": search.metadata,
             }
             for search in run.quantum_searches
@@ -662,6 +805,7 @@ def write_hybrid_artifacts(
         (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),
         (lambda path: plot_quantum_cardinality(run, path), "quantum_cardinality.png"),
         (lambda path: plot_quantum_resources(run, path), "quantum_resources.png"),
+        (lambda path: plot_quantum_timing(run, path), "quantum_timing.png"),
         (lambda path: plot_correlation_communities(run, path), "correlation_communities.png"),
     ]
     for function, filename in plot_functions:
@@ -703,6 +847,12 @@ def write_hybrid_artifacts(
         "and independently validated. Quantum output is therefore a proposal, never "
         "an unverified final portfolio.",
         "",
+        "XY-QAOA angles are optimized by the exact fixed-Hamming-weight CPU subspace "
+        "simulator. When selected, Aer GPU or IBM Runtime executes and samples the "
+        "corresponding Qiskit circuit; the portable subspace backend samples on CPU. "
+        "This split is intentional for small change windows and is reported explicitly "
+        "in `quantum_execution.csv`.",
+        "",
         "A hybrid result is globally heuristic even when its fixed-support allocation QP "
         "is solved optimally. Lower objective values are better.",
         "",
@@ -710,10 +860,19 @@ def write_hybrid_artifacts(
         "",
     ]
     if quantum_rows:
-        for row in quantum_rows:
+        for result_index, (row, search) in enumerate(
+            zip(quantum_rows, run.quantum_searches),
+        ):
+            metadata = search.metadata
+            window_index = int(metadata.get("iteration", result_index)) + 1
+            device = metadata.get("execution_device", metadata.get("backend", "unknown"))
+            verified = metadata.get("device_verification", "not recorded")
             report_lines.append(
-                f"- {_label(str(row['method']))}: objective `{float(row['objective']):.10g}`, "
+                f"- Window {window_index}, {_label(str(row['method']))}: "
+                f"objective `{float(row['objective']):.10g}`, "
                 f"runtime `{float(row['runtime_seconds']):.3f} s`, breaches `{row['breaches']}`."
+                f" Sampler device `{device}` ({verified}); cardinality-feasible shots "
+                f"`{search.cardinality_feasibility_rate:.2%}`."
             )
     else:
         report_lines.append("- Quantum execution was disabled or unavailable for this run.")

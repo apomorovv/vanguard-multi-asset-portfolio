@@ -98,7 +98,6 @@ full-gpu-cu11 = [
   "gurobipy>=11.0",
   "qiskit>=2.0,<3",
   "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
-  "qiskit-ibm-runtime>=0.40",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",

@@ -202,9 +202,13 @@ The portable subspace simulator stores only
 \binom{F}{r}
 \]
 
-states. Aer sampling compiles the same logical circuit for CPU or GPU. IBM
-Runtime sampling requires an explicitly chosen backend and records job/circuit
-metadata.
+states. This exact fixed-weight CPU simulator optimizes the angles. Aer then
+compiles and samples the same logical circuit on CPU or GPU; repeatedly sending
+the default 16-qubit COBYLA evaluations to a GPU would usually add more launch
+overhead than useful work. IBM Runtime sampling requires an explicitly chosen
+backend. Every non-subspace run records requested and actual devices, phase
+timings, cardinality feasibility, and circuit resources in
+`quantum_execution.csv` and `hybrid_diagnostics.json`.
 
 ## 10. Allocation oracle and validation
 

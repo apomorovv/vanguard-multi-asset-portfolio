@@ -12,6 +12,7 @@ Keep the complete folder together. Its standard evidence package is:
 - `change_windows.csv`: which weak holdings and promising replacements were compared;
 - `objective_timeline.csv`: best-valid objective versus end-to-end time;
 - `backtest_summary.csv`: synthetic out-of-sample return, volatility, CVaR, drawdown, and wealth;
+- `quantum_execution.csv`: angle optimizer, requested/actual sampler device, GPU verification, resources, and phase timings;
 - `hybrid_diagnostics.json`: solver, oracle, quantum, circuit, and skipped-component details;
 - `hybrid_report.md`: nontechnical interpretation;
 - `artifact_manifest.json`: SHA-256 checksums and sizes;
@@ -174,12 +175,13 @@ This explains why exact enumeration is excellent for small correctness tests but
 
 It is the complete **classical single-period baseline implemented in this repository**. All classical backends use the same canonical objective, asset bounds, group bounds, budget, optional target-return rule, optional turnover cap, validation, and metrics.
 
-It is not every possible real-world portfolio feature. In particular, the current model is not:
+The retained equal-lot baseline documented in this subsection is not every
+possible real-world portfolio feature. In particular, this legacy path is not:
 
 - a historical backtest or a guarantee of future performance;
 - a multi-period trading model;
 - a tax, liquidity, market-impact, or scenario-based risk engine;
-- a complete end-to-end quantum solver;
+- the production hybrid XY-QAOA path documented at the top of this file;
 - financial advice.
 
 The discrete model is especially important because it provides an exact or certifiable classical target against which a QUBO or quantum result can later be judged. A credible quantum experiment should use the same data and constraints and report its gap to this classical reference.

@@ -55,6 +55,8 @@ hybrid:
     seed: 20260802
     initial_state: warm
     mixer: ring
+    # Angles use the exact fixed-weight CPU subspace; this selects the final
+    # Qiskit circuit sampler and is verified from Aer execution metadata.
     backend: aer_gpu
     maximum_subspace_states: 400000
     top_candidates: 128

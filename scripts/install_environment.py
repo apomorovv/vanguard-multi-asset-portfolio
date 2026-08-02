@@ -28,6 +28,11 @@ AER_DISTRIBUTIONS = (
     "qiskit-aer-gpu-cu11",
 )
 QISKIT_DISTRIBUTIONS = ("qiskit", "qiskit-terra")
+IBM_RUNTIME_DISTRIBUTIONS = (
+    "qiskit-ibm-runtime",
+    "samplomatic",
+    "ibm-quantum-schemas",
+)
 
 
 @dataclass(frozen=True)
@@ -146,6 +151,21 @@ def project_extra(profile: str, choice: AcceleratorChoice) -> str:
     }[choice.extra]
 
 
+def cleanup_distributions(choice: AcceleratorChoice) -> tuple[str, ...]:
+    """Return packages that must be removed before installing this Aer stack.
+
+    The CUDA 12 Aer wheel is pinned to Qiskit 1.4.  Current IBM Runtime and its
+    schema/sampling dependencies require Qiskit 2.x, so they cannot share that
+    environment. Runtime is also removed from CUDA 11 GPU environments to keep
+    simulator and hardware stacks operationally isolated. CPU installs retain
+    the portable Runtime-compatible stack.
+    """
+    packages = [*AER_DISTRIBUTIONS, *QISKIT_DISTRIBUTIONS]
+    if choice.expect_gpu:
+        packages.extend(IBM_RUNTIME_DISTRIBUTIONS)
+    return tuple(packages)
+
+
 def run_command(command: Sequence[str], *, dry_run: bool) -> None:
     print("+", " ".join(command), flush=True)
     if not dry_run:
@@ -167,6 +187,8 @@ names = (
     "qiskit-aer-gpu",
     "qiskit-aer-gpu-cu11",
     "qiskit-ibm-runtime",
+    "samplomatic",
+    "ibm-quantum-schemas",
 )
 installed = {}
 for name in names:
@@ -188,6 +210,18 @@ except Exception as exc:
 devices = tuple(AerSimulator().available_devices())
 print("Aer available devices:", devices)
 expect_gpu = os.environ.get("VANGUARD_EXPECT_AER_GPU") == "1"
+if expect_gpu:
+    incompatible = sorted(
+        name
+        for name in ("qiskit-ibm-runtime", "samplomatic", "ibm-quantum-schemas")
+        if name in installed
+    )
+    if incompatible:
+        raise SystemExit(
+            "The Aer GPU environment still contains IBM Runtime packages: "
+            f"{incompatible}. Use the separate Runtime environment documented in "
+            "docs/gpu_installation.md."
+        )
 if expect_gpu and "GPU" not in devices:
     raise SystemExit(
         "A GPU Aer package was selected, but Aer reports no GPU device. "
@@ -207,6 +241,13 @@ if not result.success:
 counts = result.get_counts()
 if sum(counts.values()) != 128:
     raise SystemExit(f"Aer verification returned an unexpected shot count: {counts}")
+metadata = dict(result.results[0].metadata or {})
+reported_device = str(metadata.get("device", "")).upper()
+if expect_gpu and reported_device and reported_device != "GPU":
+    raise SystemExit(
+        f"Aer verification requested GPU, but job metadata reports {reported_device!r}"
+    )
+print("Aer execution device:", reported_device or device)
 print(f"Aer {device} verification counts:", counts)
 '''
     env = os.environ.copy()
@@ -265,8 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "pip",
             "uninstall",
             "-y",
-            *AER_DISTRIBUTIONS,
-            *QISKIT_DISTRIBUTIONS,
+            *cleanup_distributions(choice),
         ],
         dry_run=args.dry_run,
     )

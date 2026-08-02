@@ -193,10 +193,26 @@ class HybridTests(unittest.TestCase):
             artifacts = write_hybrid_artifacts(run, Path(directory), realized_returns=realized)
             self.assertGreaterEqual(len(artifacts), 25)
             self.assertTrue((Path(directory) / "hybrid_summary.csv").is_file())
+            self.assertTrue((Path(directory) / "quantum_execution.csv").is_file())
             self.assertGreater(
                 (Path(directory) / "plots/quantum_cardinality.png").stat().st_size,
                 1_000,
             )
+            self.assertGreater(
+                (Path(directory) / "plots/quantum_timing.png").stat().st_size,
+                1_000,
+            )
+            with (Path(directory) / "quantum_execution.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                quantum_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(quantum_rows), 1)
+            self.assertEqual(
+                quantum_rows[0]["parameter_optimizer_backend"],
+                "fixed_weight_subspace_cpu",
+            )
+            self.assertEqual(quantum_rows[0]["execution_device"], "CPU")
             with (Path(directory) / "constraint_checks.csv").open(
                 newline="",
                 encoding="utf-8",

@@ -329,6 +329,18 @@ def run_hybrid_optimizer(
                     oracle,
                     window.frozen_support,
                 )
+                quantum.metadata.update(
+                    {
+                        "iteration": iteration,
+                        "allocation_oracle_seconds": quantum_allocations.runtime,
+                        "window_end_to_end_seconds": (
+                            quantum.runtime + quantum_allocations.runtime
+                        ),
+                        "evaluated_supports": quantum_allocations.evaluated_supports,
+                        "feasible_supports": quantum_allocations.feasible_supports,
+                        "duplicate_supports": quantum_allocations.duplicate_supports,
+                    }
+                )
                 quantum_result = _copy_as_method(
                     quantum_allocations.best,
                     quantum.method,
@@ -379,6 +391,18 @@ def run_hybrid_optimizer(
                     penalty_quantum.bitstrings,
                     oracle,
                     window.frozen_support,
+                )
+                penalty_quantum.metadata.update(
+                    {
+                        "iteration": iteration,
+                        "allocation_oracle_seconds": penalty_allocations.runtime,
+                        "window_end_to_end_seconds": (
+                            penalty_quantum.runtime + penalty_allocations.runtime
+                        ),
+                        "evaluated_supports": penalty_allocations.evaluated_supports,
+                        "feasible_supports": penalty_allocations.feasible_supports,
+                        "duplicate_supports": penalty_allocations.duplicate_supports,
+                    }
                 )
                 penalty_result = _copy_as_method(
                     penalty_allocations.best,

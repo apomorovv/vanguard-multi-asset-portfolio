@@ -31,6 +31,10 @@ def test_cuda_13_selects_cuda_12_gpu_wheel() -> None:
     assert choice.aer_distribution.startswith("qiskit-aer-gpu")
     assert "cu11" not in choice.aer_distribution
     assert MODULE.project_extra("full", choice) == "full-gpu"
+    removed = MODULE.cleanup_distributions(choice)
+    assert "qiskit-ibm-runtime" in removed
+    assert "samplomatic" in removed
+    assert "ibm-quantum-schemas" in removed
 
 
 def test_cuda_11_selects_cu11_wheel() -> None:
@@ -43,6 +47,7 @@ def test_cuda_11_selects_cu11_wheel() -> None:
     assert choice.extra == "quantum-gpu-cu11"
     assert choice.aer_distribution.startswith("qiskit-aer-gpu-cu11")
     assert MODULE.project_extra("full", choice) == "full-gpu-cu11"
+    assert "qiskit-ibm-runtime" in MODULE.cleanup_distributions(choice)
 
 
 def test_missing_gpu_uses_cpu_wheel() -> None:
@@ -55,6 +60,7 @@ def test_missing_gpu_uses_cpu_wheel() -> None:
     assert choice.extra == "quantum-cpu"
     assert choice.aer_distribution.startswith("qiskit-aer")
     assert MODULE.project_extra("full", choice) == "full"
+    assert "qiskit-ibm-runtime" not in MODULE.cleanup_distributions(choice)
 
 
 def test_non_linux_uses_cpu_wheel() -> None:
