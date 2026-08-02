@@ -257,39 +257,59 @@ def _sample_aer(
         raise SolverUnavailableError(
             "Qiskit Aer is not installed; install the 'quantum' extra"
         ) from exc
-    kwargs: dict[str, Any] = {"method": "statevector"}
-    if use_gpu:
-        kwargs["device"] = "GPU"
-    try:
+    def execute(gpu: bool) -> tuple[dict[str, int], dict[str, Any]]:
+        kwargs: dict[str, Any] = {"method": "statevector"}
+        if gpu:
+            kwargs["device"] = "GPU"
         simulator = AerSimulator(**kwargs)
-    except Exception as exc:
+        measured = circuit.copy()
+        measured.measure_all()
+        compiled = transpile(
+            measured,
+            simulator,
+            optimization_level=int(optimization_level),
+            seed_transpiler=int(seed),
+        )
+        # Some CPU-only Aer builds accept device="GPU" at construction and
+        # fail only when the job executes.  Keep the whole execution inside the
+        # fallback boundary rather than checking only simulator construction.
+        result = simulator.run(compiled, shots=int(shots), seed_simulator=int(seed)).result()
+        counts = _decode_qiskit_counts(result.get_counts(), circuit.num_qubits)
+        operations = {str(name): int(value) for name, value in compiled.count_ops().items()}
+        two_qubit = sum(
+            count
+            for name, count in operations.items()
+            if name.lower() in {"cx", "cz", "ecr", "rxx", "ryy", "rzz", "swap"}
+        )
+        return counts, {
+            "backend": "aer_gpu" if gpu else "aer_cpu",
+            "transpiled_depth": int(compiled.depth()),
+            "transpiled_size": int(compiled.size()),
+            "transpiled_two_qubit_gates": int(two_qubit),
+            "transpiled_operations": operations,
+        }
+
+    try:
+        return execute(use_gpu)
+    except Exception as first_error:
         if not use_gpu:
-            raise SolverUnavailableError(f"AerSimulator could not initialize: {exc}") from exc
-        simulator = AerSimulator(method="statevector")
-        use_gpu = False
-    measured = circuit.copy()
-    measured.measure_all()
-    compiled = transpile(
-        measured,
-        simulator,
-        optimization_level=int(optimization_level),
-        seed_transpiler=int(seed),
-    )
-    result = simulator.run(compiled, shots=int(shots), seed_simulator=int(seed)).result()
-    counts = _decode_qiskit_counts(result.get_counts(), circuit.num_qubits)
-    operations = {str(name): int(value) for name, value in compiled.count_ops().items()}
-    two_qubit = sum(
-        count
-        for name, count in operations.items()
-        if name.lower() in {"cx", "cz", "ecr", "rxx", "ryy", "rzz", "swap"}
-    )
-    return counts, {
-        "backend": "aer_gpu" if use_gpu else "aer_cpu",
-        "transpiled_depth": int(compiled.depth()),
-        "transpiled_size": int(compiled.size()),
-        "transpiled_two_qubit_gates": int(two_qubit),
-        "transpiled_operations": operations,
-    }
+            raise SolverUnavailableError(
+                f"Aer CPU simulation failed: {first_error}"
+            ) from first_error
+        try:
+            counts, metadata = execute(False)
+        except Exception as fallback_error:
+            raise SolverUnavailableError(
+                "Aer GPU simulation failed and the automatic CPU fallback also failed: "
+                f"GPU={first_error}; CPU={fallback_error}"
+            ) from fallback_error
+        metadata.update(
+            {
+                "requested_backend": "aer_gpu",
+                "fallback_reason": str(first_error),
+            }
+        )
+        return counts, metadata
 
 
 def _sample_ibm_runtime(
