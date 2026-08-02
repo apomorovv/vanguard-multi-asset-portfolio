@@ -17,8 +17,16 @@ def _feature_matrix(problem: PortfolioProblem, dimensions: int) -> np.ndarray:
     if problem.has_factor_model:
         features = problem.factor_loadings.copy()
         if features.shape[1] > 1:
-            # Remove the dominant/common factor before forming communities.
-            common = np.argmax(np.var(features, axis=0))
+            # Remove the common factor before forming communities.  A market
+            # factor has large same-signed loadings but can have less
+            # cross-sectional variance than a style factor, so variance alone
+            # is not a reliable identifier.
+            names = [name.lower() for name in (problem.factor_names or [])]
+            common = (
+                names.index("market")
+                if "market" in names
+                else int(np.argmax(np.mean(np.abs(features), axis=0)))
+            )
             features = np.delete(features, common, axis=1)
         return features[:, : max(1, dimensions)]
     count = min(max(1, dimensions), problem.n - 1)
