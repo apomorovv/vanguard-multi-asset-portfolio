@@ -179,28 +179,54 @@ def plot_allocations(run: HybridRun, path: Path) -> dict[str, Path]:
 
 def plot_objective_and_runtime(run: HybridRun, path: Path) -> dict[str, Path]:
     results = _best_methods(run.all_results())
-    labels = [_label(result.method) for result in results]
-    best = min(
-        result.objective
-        for result in results
-        if result.model_type != "continuous_relaxation"
-    )
-    gaps = np.asarray([max(result.objective - best, 0.0) for result in results])
+    feasible_results = [
+        result for result in results if result.model_type != "continuous_relaxation"
+    ]
+    feasible_labels = [_label(result.method) for result in feasible_results]
+    best = min(result.objective for result in feasible_results)
+    gaps = 1e6 * np.asarray([result.objective - best for result in feasible_results])
+    runtime_labels = [_label(result.method) for result in results]
     runtimes = np.asarray([max(result.runtime, 1e-6) for result in results])
-    x = np.arange(len(results))
+    quality_x = np.arange(len(feasible_results))
+    runtime_x = np.arange(len(results))
     fig, axes = plt.subplots(1, 2, figsize=(max(11, len(results) * 1.7), 4.8))
-    axes[0].bar(x, gaps, color=[COLORS[index % len(COLORS)] for index in x])
-    axes[0].set_ylabel("Objective gap to best valid result")
+    axes[0].bar(
+        quality_x,
+        gaps,
+        color=[COLORS[index % len(COLORS)] for index in quality_x],
+    )
+    relaxation = next(
+        (result for result in results if result.model_type == "continuous_relaxation"),
+        None,
+    )
+    if relaxation is not None:
+        bound_gap = 1e6 * (relaxation.objective - best)
+        axes[0].text(
+            0.02,
+            0.96,
+            f"Continuous-relaxation lower bound: {bound_gap:+.2f} ×10⁻⁶",
+            transform=axes[0].transAxes,
+            ha="left",
+            va="top",
+            fontsize=8,
+            color="#34495E",
+        )
+    axes[0].set_ylabel("Feasible objective gap (×10⁻⁶; lower is better)")
     axes[0].set_title("Solution quality")
     axes[0].grid(axis="y", alpha=0.25)
-    axes[1].bar(x, runtimes, color=[COLORS[index % len(COLORS)] for index in x])
+    axes[1].bar(
+        runtime_x,
+        runtimes,
+        color=[COLORS[index % len(COLORS)] for index in runtime_x],
+    )
     axes[1].set_yscale("log")
-    axes[1].set_ylabel("End-to-end seconds (log scale)")
+    axes[1].set_ylabel("Component runtime in seconds (log scale)")
     axes[1].set_title("Runtime")
     axes[1].grid(axis="y", alpha=0.25, which="both")
-    for axis in axes:
-        axis.set_xticks(x)
-        axis.set_xticklabels(labels, rotation=30, ha="right")
+    axes[0].set_xticks(quality_x)
+    axes[0].set_xticklabels(feasible_labels, rotation=30, ha="right")
+    axes[1].set_xticks(runtime_x)
+    axes[1].set_xticklabels(runtime_labels, rotation=30, ha="right")
     fig.tight_layout()
     return _save(fig, path)
 
@@ -235,10 +261,11 @@ def plot_objective_timeline(run: HybridRun, path: Path) -> dict[str, Path]:
     rows = sorted(run.timeline, key=lambda row: float(row["elapsed_seconds"]))
     elapsed = [float(row["elapsed_seconds"]) for row in rows]
     objective = np.minimum.accumulate([float(row["objective"]) for row in rows])
+    improvement = 1e6 * (objective[0] - objective)
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
-    ax.step(elapsed, objective, where="post", color="#0B5CAD", linewidth=2.2)
-    ax.scatter(elapsed, objective, color="#F28E2B", s=45, zorder=3)
-    for row, x, y in zip(rows, elapsed, objective):
+    ax.step(elapsed, improvement, where="post", color="#0B5CAD", linewidth=2.2)
+    ax.scatter(elapsed, improvement, color="#F28E2B", s=45, zorder=3)
+    for row, x, y in zip(rows, elapsed, improvement):
         ax.annotate(
             str(row["stage"]),
             (x, y),
@@ -247,7 +274,7 @@ def plot_objective_timeline(run: HybridRun, path: Path) -> dict[str, Path]:
             fontsize=8,
         )
     ax.set_xlabel("End-to-end elapsed seconds")
-    ax.set_ylabel("Best valid objective")
+    ax.set_ylabel("Cumulative objective improvement (×10⁻⁶)")
     ax.set_title("Anytime behavior: best feasible portfolio versus time")
     ax.grid(alpha=0.25)
     fig.tight_layout()
@@ -451,8 +478,17 @@ def plot_quantum_resources(run: HybridRun, path: Path) -> dict[str, Path]:
 
 def plot_correlation_communities(run: HybridRun, path: Path) -> dict[str, Path]:
     labels = market_communities(run.problem, seed=run.config.seed)
-    order = np.argsort(labels, kind="stable")
-    displayed = order[: min(250, run.problem.n)]
+    display_limit = min(250, run.problem.n)
+    buckets = {
+        label: np.flatnonzero(labels == label).tolist()
+        for label in sorted(set(labels.tolist()))
+    }
+    sampled: list[int] = []
+    while len(sampled) < display_limit and any(buckets.values()):
+        for label in buckets:
+            if buckets[label] and len(sampled) < display_limit:
+                sampled.append(int(buckets[label].pop(0)))
+    displayed = np.asarray(sorted(sampled, key=lambda index: labels[index]), dtype=int)
     correlation = run.problem.corr[np.ix_(displayed, displayed)]
     fig, ax = plt.subplots(figsize=(7.0, 6.0))
     image = ax.imshow(correlation, cmap="RdBu_r", vmin=-1, vmax=1, interpolation="nearest")
@@ -463,7 +499,8 @@ def plot_correlation_communities(run: HybridRun, path: Path) -> dict[str, Path]:
         ax.axvline(boundary, color="white", linewidth=0.7)
     ax.set_xlabel("Assets sorted by correlation community")
     ax.set_ylabel("Assets sorted by correlation community")
-    ax.set_title("Market structure used for diverse candidate windows")
+    suffix = "" if display_limit == run.problem.n else f" ({display_limit}-asset stratified sample)"
+    ax.set_title(f"Market structure used for diverse candidate windows{suffix}")
     fig.colorbar(image, ax=ax, label="Correlation")
     fig.tight_layout()
     return _save(fig, path)
@@ -519,6 +556,8 @@ def write_hybrid_artifacts(
             allocation_rows.append(
                 {
                     "method": result.method,
+                    "stage": result.metadata.get("stage", ""),
+                    "iteration": result.metadata.get("iteration", ""),
                     "asset": asset,
                     "group": run.problem.group_names[run.problem.asset_group[index]],
                     "weight": result.weights[index],
@@ -551,6 +590,11 @@ def write_hybrid_artifacts(
     artifacts["timeline"] = _write_csv(output / "objective_timeline.csv", run.timeline)
 
     window_rows: list[dict[str, Any]] = []
+    communities = (
+        market_communities(run.problem, seed=run.config.seed)
+        if run.config.use_topology
+        else None
+    )
     for iteration, window in enumerate(run.windows):
         for index in window.indices:
             window_rows.append(
@@ -560,6 +604,7 @@ def write_hybrid_artifacts(
                     "asset_index": index,
                     "role": "weak_held" if index in window.weak_held else "promising_unheld",
                     "group": run.problem.group_names[run.problem.asset_group[index]],
+                    "community": "" if communities is None else int(communities[index]),
                 }
             )
     artifacts["windows"] = _write_csv(output / "change_windows.csv", window_rows)
@@ -626,15 +671,25 @@ def write_hybrid_artifacts(
 
     rows = run.summary_records()
     best_row = next(row for row in rows if row["method"] == run.best.method)
+    tied_methods = sorted(
+        {
+            _label(str(row["method"]))
+            for row in rows
+            if bool(row["feasible"])
+            and str(row["model_type"]) != "continuous_relaxation"
+            and abs(float(row["objective"]) - run.best.objective) <= 1e-10
+        }
+    )
     quantum_rows = [row for row in rows if "qaoa" in str(row["method"])]
     report_lines = [
         "# Hybrid portfolio optimization report",
         "",
-        f"- Best valid method: **{_label(run.best.method)}**",
+        f"- Best valid incumbent: **{' = '.join(tied_methods)}**",
         f"- Objective: `{run.best.objective:.10g}`",
         f"- Expected return: `{float(best_row['expected_return']):.3%}`",
         f"- Volatility: `{float(best_row['volatility']):.3%}`",
-        f"- Turnover: `{float(best_row['turnover']):.3%}`",
+        f"- L1 turnover: `{float(best_row['turnover']):.3%}` "
+        f"(one-way convention: `{0.5 * float(best_row['turnover']):.3%}`)",
         f"- Selected assets: `{int(best_row['support_size'])}`",
         f"- Hard-constraint breaches: **{run.best.breaches}**",
         f"- Total runtime: `{run.runtime:.3f} s`",
@@ -648,6 +703,9 @@ def write_hybrid_artifacts(
         "and independently validated. Quantum output is therefore a proposal, never "
         "an unverified final portfolio.",
         "",
+        "A hybrid result is globally heuristic even when its fixed-support allocation QP "
+        "is solved optimally. Lower objective values are better.",
+        "",
         "## Quantum results",
         "",
     ]
@@ -659,6 +717,21 @@ def write_hybrid_artifacts(
             )
     else:
         report_lines.append("- Quantum execution was disabled or unavailable for this run.")
+    gurobi_rows = [row for row in rows if row["method"] == "gurobi_cardinality_miqp"]
+    if gurobi_rows:
+        row = gurobi_rows[-1]
+        if row["best_bound"] != "" and row["reported_mip_gap"] != "":
+            report_lines.extend(
+                [
+                    "",
+                    "## Classical certification",
+                    "",
+                    f"- Gurobi incumbent: `{float(row['objective']):.10g}`",
+                    f"- Certified lower bound: `{float(row['best_bound']):.10g}`",
+                    f"- Reported MIP gap: `{float(row['reported_mip_gap']):.4%}`",
+                    f"- Status: `{row['status']}` (optimal within the configured MIP tolerance).",
+                ]
+            )
     if run.skipped:
         report_lines.extend(["", "## Explicitly skipped components", ""])
         report_lines.extend(f"- `{name}`: {reason}" for name, reason in run.skipped.items())
