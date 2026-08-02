@@ -3,10 +3,11 @@ problem:
   n_assets: 100
   n_groups: 8
   n_factors: 6
+  current_cardinality: 20
   seed: 20260802
   overrides:
     target_return: null
-    max_turnover: null
+    max_turnover: 0.40
 
 preferences:
   preset: balanced
