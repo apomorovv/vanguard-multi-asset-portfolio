@@ -37,6 +37,8 @@ quantum-gpu-cu11 = [
   "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 
+# IBM Runtime follows the current Qiskit line. Install this separately from the
+# CUDA 12 simulator environment, whose only available wheel requires Qiskit 1.4.
 ibm-runtime = ["qiskit-ibm-runtime>=0.40"]
 app = ["streamlit>=1.40", "plotly>=5.24"]
 all-solvers = [
@@ -56,7 +58,7 @@ dev = [
   "ruff>=0.6",
 ]
 
-# Portable full install: current Qiskit and CPU Aer.
+# Portable full install: current Qiskit, CPU Aer, and IBM Runtime.
 full = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
@@ -72,8 +74,8 @@ full = [
   "pytest-cov>=5.0",
 ]
 
-# CUDA 12 package. This is also the correct choice when nvidia-smi reports
-# CUDA 13, because the driver can run CUDA 12 user-space binaries.
+# CUDA 12 local-simulator stack. IBM Runtime is intentionally excluded because
+# the CUDA 12 Aer wheel requires Qiskit 1.4 while current Runtime uses Qiskit 2.
 full-gpu = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
@@ -82,7 +84,6 @@ full-gpu = [
   "gurobipy>=11.0",
   "qiskit==1.4.6",
   "qiskit-aer-gpu==0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
-  "qiskit-ibm-runtime==0.40.1",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
