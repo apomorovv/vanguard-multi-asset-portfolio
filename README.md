@@ -92,7 +92,11 @@ so risk is evaluated as
 \]
 
 OSQP receives this factor form with `n_factors` auxiliary exposures instead of
-a dense quadratic block.
+a dense quadratic block. Generated universes use a positive common market
+factor, group/style factors, and idiosyncratic risk; expected returns are linked
+to factor premia rather than sampled independently of risk. Presentation
+profiles also set `problem.current_cardinality` so turnover is measured from a
+realistic sparse incumbent instead of from thousands of equal-weight holdings.
 
 ## Why XY-QAOA is the primary quantum method
 
@@ -238,9 +242,12 @@ validated; infeasible combinations are reported instead of silently relaxed.
 | Copilot and plots | CPU |
 
 `quantum.backend: subspace` is the portable deterministic reference.
-`aer_gpu` uses the Qiskit circuit and the GPU. `ibm_runtime` requires an
-explicit backend name and is reserved for selected final windows. Backend
-calibration should be checked on the run date; no processor is hardcoded.
+`aer_gpu` uses the Qiskit circuit and the GPU. If the installed Aer build accepts
+the GPU request but cannot execute it, the runner records the reason and
+automatically retries Aer CPU so the quantum comparison is not silently lost.
+`ibm_runtime` requires an explicit backend name and is reserved for selected
+final windows. Backend calibration should be checked on the run date; no
+processor is hardcoded.
 
 ## Fair comparisons
 
@@ -260,6 +267,11 @@ Report objective versus time, time to first valid portfolio, full feasibility,
 oracle calls, duplicate supports, Gurobi bound/gap/nodes, quantum cardinality
 rate, qubits, shots, transpiled depth/two-qubit gates, and out-of-sample risk,
 return, CVaR, drawdown, and turnover.
+
+`optimal` refers to global model status. A hybrid support is reported as a
+feasible incumbent even when its conditional fixed-support allocation QP is
+solved optimally. Gurobi `OPTIMAL` means optimal within its configured MIP
+tolerance; the numeric bound and reported gap remain the auditable certificate.
 
 ## Output package
 
