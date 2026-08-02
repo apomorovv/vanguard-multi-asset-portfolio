@@ -225,7 +225,9 @@ The final direct Gurobi model uses continuous `w`, binary `z`, turnover
 epigraph `t`, factorized risk, exact cardinality, all configured hard rules,
 and the best hybrid portfolio as a MIP start. A time-limited run returns the
 incumbent, best bound, reported gap, nodes, build time, and solve time. Only an
-optimal status is described as a proof.
+optimal status is described as global certification, and always together with
+the configured tolerance and numeric MIP gap. Fixed-support QP optimality is
+recorded separately and never upgrades LNS or QAOA to global optimality.
 
 ## 12. Required comparisons
 
