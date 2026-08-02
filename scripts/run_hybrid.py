@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run the final constraint-safe hybrid portfolio optimizer from YAML."""
+"""Run the constraint-safe hybrid portfolio optimizer from YAML."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ def _problem(config: dict[str, Any]) -> PortfolioProblem:
                 if config.get("current_cardinality") is None
                 else int(config["current_cardinality"])
             ),
+            materialize_covariance=bool(config.get("materialize_covariance", True)),
         )
     elif source in {"json", "file"}:
         problem = load_problem(ROOT / str(config["path"]))
@@ -109,6 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-quantum", action="store_true")
     parser.add_argument("--no-gurobi", action="store_true")
+    parser.add_argument(
+        "--quantum-backend",
+        choices=("subspace", "aer_cpu", "aer_gpu", "ibm_runtime"),
+        help="Override the quantum sampler configured in YAML.",
+    )
+    parser.add_argument(
+        "--ibm-backend",
+        help="IBM QPU name; required when --quantum-backend=ibm_runtime.",
+    )
+    parser.add_argument("--quantum-shots", type=int)
+    parser.add_argument("--window-size", type=int)
+    parser.add_argument("--iterations", type=int)
     args = parser.parse_args(argv)
     config_path = args.config if args.config.is_absolute() else ROOT / args.config
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -116,16 +130,32 @@ def main(argv: list[str] | None = None) -> int:
     preferences = preferences_from_config(dict(config.get("preferences", {})))
     constraints = _constraints(dict(config.get("constraints", {})), problem)
     hybrid = _hybrid_config(dict(config.get("hybrid", {})))
+    quantum_updates: dict[str, Any] = {}
+    if args.quantum_backend is not None:
+        quantum_updates["backend"] = args.quantum_backend
+    if args.ibm_backend is not None:
+        quantum_updates["ibm_backend"] = args.ibm_backend
+    if args.quantum_shots is not None:
+        quantum_updates["shots"] = args.quantum_shots
+    if quantum_updates:
+        hybrid = replace(hybrid, quantum=replace(hybrid.quantum, **quantum_updates))
+    hybrid_updates: dict[str, Any] = {}
+    if args.window_size is not None:
+        hybrid_updates["window_size"] = args.window_size
+    if args.iterations is not None:
+        hybrid_updates["iterations"] = args.iterations
+    if hybrid_updates:
+        hybrid = replace(hybrid, **hybrid_updates)
     if args.no_quantum:
-        hybrid = HybridConfig(
-            **{
-                **hybrid.__dict__,
-                "run_quantum": False,
-                "run_penalty_qaoa": False,
-            }
-        )
+        hybrid = replace(hybrid, run_quantum=False, run_penalty_qaoa=False)
     if args.no_gurobi:
-        hybrid = HybridConfig(**{**hybrid.__dict__, "run_gurobi_reference": False})
+        hybrid = replace(hybrid, run_gurobi_reference=False)
+    if (
+        hybrid.run_quantum
+        and hybrid.quantum.backend == "ibm_runtime"
+        and not hybrid.quantum.ibm_backend
+    ):
+        parser.error("IBM Runtime sampling requires --ibm-backend or quantum.ibm_backend")
     configured_output = config.get("outputs", {}).get(
         "directory",
         "results/final_hybrid",

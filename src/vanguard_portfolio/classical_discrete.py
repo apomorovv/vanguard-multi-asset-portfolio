@@ -277,7 +277,7 @@ def _make_swap_state(
     return _SwapState(
         lots=lots,
         weights=weights,
-        cov_times_weights=problem.cov @ weights,
+        cov_times_weights=problem.covariance_matvec(weights),
         group_exposure=problem.A @ weights,
         expected_return=float(problem.mu @ weights),
         turnover=float(np.sum(np.abs(weights - problem.w0))),
@@ -366,8 +366,12 @@ def _apply_swap(
     state.lots[receiver] += 1
     state.weights[donor] -= lot_size
     state.weights[receiver] += lot_size
+    covariance_columns = problem.covariance_submatrix(
+        np.arange(problem.n),
+        [receiver, donor],
+    )
     state.cov_times_weights += lot_size * (
-        problem.cov[:, receiver] - problem.cov[:, donor]
+        covariance_columns[:, 0] - covariance_columns[:, 1]
     )
     if donor_group != receiver_group:
         state.group_exposure[donor_group] -= lot_size
@@ -709,8 +713,16 @@ def solve_discrete_gurobi(
             model.addConstr(lot_size * (problem.mu @ q) >= problem.target_return)
         if problem.max_turnover is not None:
             model.addConstr(t.sum() <= problem.max_turnover)
+        if problem.has_factor_model:
+            factor_exposure = lot_size * (problem.factor_loadings.T @ q)
+            risk_expression = (
+                factor_exposure @ problem.factor_cov @ factor_exposure
+                + lot_size**2 * ((problem.idiosyncratic_var * q) @ q)
+            )
+        else:
+            risk_expression = lot_size**2 * (q @ problem.cov @ q)
         model.setObjective(
-            preferences.lambda_risk * lot_size**2 * (q @ problem.cov @ q)
+            preferences.lambda_risk * risk_expression
             - preferences.lambda_return * lot_size * (problem.mu @ q)
             - preferences.lambda_income * lot_size * (problem.y @ q)
             + preferences.lambda_cost * (problem.c @ t),
@@ -782,7 +794,7 @@ def solve_cardinality_gurobi(
     This is the gold-standard reference for the hybrid window methods.  The
     legacy :func:`solve_discrete_gurobi` remains an equal-lot benchmark; this
     function instead uses binary support variables and exact continuous
-    percentages, matching the production architecture.
+    percentages, matching the hybrid architecture.
     """
     try:
         import gurobipy as gp
@@ -946,8 +958,15 @@ def solve_discrete_cvxpy(
     q = cp.Variable(problem.n, integer=True, name="q")
     t = cp.Variable(problem.n, nonneg=True, name="t")
     w = lot_size * q
+    if problem.has_factor_model:
+        risk_expression = cp.quad_form(
+            problem.factor_loadings.T @ w,
+            cp.psd_wrap(problem.factor_cov),
+        ) + cp.sum(cp.multiply(problem.idiosyncratic_var, cp.square(w)))
+    else:
+        risk_expression = cp.quad_form(w, cp.psd_wrap(problem.cov))
     objective = cp.Minimize(
-        preferences.lambda_risk * cp.quad_form(w, cp.psd_wrap(problem.cov))
+        preferences.lambda_risk * risk_expression
         - preferences.lambda_return * problem.mu @ w
         - preferences.lambda_income * problem.y @ w
         + preferences.lambda_cost * problem.c @ t

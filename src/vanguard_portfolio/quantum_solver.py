@@ -399,6 +399,26 @@ def _sample_ibm_runtime(
     sampler_start = time.perf_counter()
     service = QiskitRuntimeService()
     backend = service.backend(backend_name)
+    backend_version = str(getattr(backend, "backend_version", ""))
+    calibration_timestamp = ""
+    try:
+        properties = backend.properties()
+        last_update = getattr(properties, "last_update_date", None)
+        if last_update is not None:
+            calibration_timestamp = (
+                last_update.isoformat()
+                if hasattr(last_update, "isoformat")
+                else str(last_update)
+            )
+    except Exception:
+        pass
+    try:
+        backend_status = backend.status()
+        pending_jobs = int(getattr(backend_status, "pending_jobs", -1))
+        operational = bool(getattr(backend_status, "operational", True))
+    except Exception:
+        pending_jobs = -1
+        operational = True
     measured = circuit.copy()
     measured.measure_all()
     transpile_start = time.perf_counter()
@@ -413,6 +433,14 @@ def _sample_ibm_runtime(
     job = sampler.run([isa_circuit], shots=int(shots))
     publication = job.result()[0]
     execution_seconds = time.perf_counter() - execution_start
+    qpu_seconds = None
+    try:
+        metrics = job.metrics()
+        usage = metrics.get("usage", metrics.get("usage_estimation", {}))
+        if isinstance(usage, dict) and usage.get("quantum_seconds") is not None:
+            qpu_seconds = float(usage["quantum_seconds"])
+    except Exception:
+        pass
     decode_start = time.perf_counter()
     raw = publication.data.meas.get_counts()
     counts = _decode_qiskit_counts(raw, circuit.num_qubits)
@@ -429,13 +457,21 @@ def _sample_ibm_runtime(
         "execution_device": backend_name,
         "gpu_accelerated": False,
         "device_verification": "ibm_runtime_job",
+        "runtime_mode": "job",
         "job_id": job.job_id(),
+        "backend_version": backend_version,
+        "backend_calibration_timestamp": calibration_timestamp,
+        "backend_num_qubits": int(getattr(backend, "num_qubits", circuit.num_qubits)),
+        "backend_operational_at_submission": operational,
+        "backend_pending_jobs_at_submission": pending_jobs,
         "transpiled_depth": int(isa_circuit.depth()),
         "transpiled_size": int(isa_circuit.size()),
         "transpiled_two_qubit_gates": int(two_qubit),
         "transpiled_operations": operations,
         "transpile_seconds": transpile_seconds,
         "simulation_seconds": execution_seconds,
+        "qpu_wall_seconds": execution_seconds,
+        "qpu_usage_seconds": qpu_seconds,
         "count_decode_seconds": decode_seconds,
         "sampler_total_seconds": time.perf_counter() - sampler_start,
     }

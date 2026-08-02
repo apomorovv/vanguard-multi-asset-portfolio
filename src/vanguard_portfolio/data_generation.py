@@ -90,6 +90,7 @@ def generate_factor_universe(
     n_factors: int = 4,
     seed: int = 0,
     current_cardinality: int | None = None,
+    materialize_covariance: bool = True,
 ) -> PortfolioProblem:
     """Generate a reproducible, financially plausible PSD factor universe.
 
@@ -99,8 +100,13 @@ def generate_factor_universe(
     zero-mean factor loadings while retaining an exact ``BB' + D`` model.
 
     ``current_cardinality`` optionally creates a balanced sparse incumbent for
-    rebalancing experiments.  Leaving it as ``None`` preserves the fully
+    rebalancing experiments. Leaving it as ``None`` preserves the fully
     invested equal-weight incumbent used by generic scaling tests.
+
+    Set ``materialize_covariance=False`` for large scaling runs. The returned
+    problem then retains only ``B``, ``Omega`` and the idiosyncratic diagonal;
+    covariance products and small submatrices are evaluated on demand in
+    ``O(n k)`` memory rather than storing an ``O(n^2)`` matrix.
     """
     if n_assets < 2 or not 1 <= n_groups <= n_assets:
         raise ValueError("require n_assets >= 2 and 1 <= n_groups <= n_assets")
@@ -136,14 +142,21 @@ def generate_factor_universe(
     )
     idiosyncratic_var = desired_sigma**2 * (1.0 - systematic_fraction)
     factor_cov = np.eye(n_factors)
-    cov = scaled_loadings @ factor_cov @ scaled_loadings.T + np.diag(idiosyncratic_var)
-    corr = cov / np.outer(desired_sigma, desired_sigma)
-    # BB' + D is positive definite by construction, and positive diagonal
-    # scaling preserves PSD.  A full eigen-projection here used to impose an
-    # unnecessary O(n^3) cost on every large generated universe.
-    corr = 0.5 * (corr + corr.T)
-    np.fill_diagonal(corr, 1.0)
-    cov = corr * np.outer(desired_sigma, desired_sigma)
+    if materialize_covariance:
+        cov = (
+            scaled_loadings @ factor_cov @ scaled_loadings.T
+            + np.diag(idiosyncratic_var)
+        )
+        corr = cov / np.outer(desired_sigma, desired_sigma)
+        # BB' + D is positive definite by construction, and positive diagonal
+        # scaling preserves PSD. A full eigen-projection would impose an
+        # unnecessary O(n^3) cost on every generated universe.
+        corr = 0.5 * (corr + corr.T)
+        np.fill_diagonal(corr, 1.0)
+        cov = corr * np.outer(desired_sigma, desired_sigma)
+    else:
+        corr = None
+        cov = None
 
     if current_cardinality is None:
         w0 = np.full(n_assets, 1.0 / n_assets)
@@ -214,6 +227,33 @@ def generate_factor_universe(
     )
 
 
+def _sample_factor_returns(
+    problem: PortfolioProblem,
+    *,
+    observations: int,
+    mean_scale: float,
+    covariance_scale: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw returns from a factor model without constructing dense covariance."""
+    factor_draws = rng.multivariate_normal(
+        mean=np.zeros(problem.num_factors),
+        cov=problem.factor_cov * covariance_scale,
+        size=int(observations),
+        method="cholesky",
+    )
+    idiosyncratic = rng.normal(
+        0.0,
+        np.sqrt(problem.idiosyncratic_var * covariance_scale),
+        size=(int(observations), problem.n),
+    )
+    return (
+        mean_scale * problem.mu[None, :]
+        + factor_draws @ problem.factor_loadings.T
+        + idiosyncratic
+    )
+
+
 def generate_return_scenarios(
     problem: PortfolioProblem,
     n_scenarios: int = 500,
@@ -228,6 +268,14 @@ def generate_return_scenarios(
     if int(n_scenarios) <= 1:
         raise ValueError("n_scenarios must exceed one")
     rng = np.random.default_rng(seed)
+    if problem.has_factor_model:
+        return _sample_factor_returns(
+            problem,
+            observations=int(n_scenarios),
+            mean_scale=1.0,
+            covariance_scale=1.0,
+            rng=rng,
+        )
     return rng.multivariate_normal(
         mean=problem.mu,
         cov=problem.cov,
@@ -246,6 +294,14 @@ def generate_backtest_returns(
     if int(periods) <= 1 or int(periods_per_year) <= 0:
         raise ValueError("periods must exceed one and periods_per_year must be positive")
     rng = np.random.default_rng(seed)
+    if problem.has_factor_model:
+        return _sample_factor_returns(
+            problem,
+            observations=int(periods),
+            mean_scale=1.0 / int(periods_per_year),
+            covariance_scale=1.0 / int(periods_per_year),
+            rng=rng,
+        )
     return rng.multivariate_normal(
         mean=problem.mu / int(periods_per_year),
         cov=problem.cov / int(periods_per_year),

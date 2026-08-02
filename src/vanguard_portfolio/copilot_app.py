@@ -1,4 +1,4 @@
-"""Interactive Streamlit Copilot for the final hybrid optimizer.
+"""Interactive Streamlit Copilot for the hybrid optimizer.
 
 Run with::
 

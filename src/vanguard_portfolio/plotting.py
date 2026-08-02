@@ -197,8 +197,11 @@ def plot_objective_gap(report: BenchmarkReport, path: str | Path) -> Path:
 
 
 def plot_correlation(problem: PortfolioProblem, path: str | Path) -> Path:
+    display_count = min(problem.n, 250)
+    displayed = np.linspace(0, problem.n - 1, display_count, dtype=int)
+    correlation = problem.correlation_submatrix(displayed)
     fig, ax = plt.subplots(figsize=(7.0, 6.0))
-    image = ax.imshow(problem.corr, cmap="RdBu_r", vmin=-1, vmax=1)
+    image = ax.imshow(correlation, cmap="RdBu_r", vmin=-1, vmax=1)
     if problem.n <= 60:
         ax.set_xticks(np.arange(problem.n))
         ax.set_yticks(np.arange(problem.n))
@@ -207,7 +210,9 @@ def plot_correlation(problem: PortfolioProblem, path: str | Path) -> Path:
     else:
         ax.set_xticks([])
         ax.set_yticks([])
-        ax.set_xlabel(f"{problem.n} assets (labels hidden for readability)")
+        ax.set_xlabel(
+            f"{display_count}-asset stratified sample from {problem.n:,} assets"
+        )
     ax.set_title("Asset return correlation")
     fig.colorbar(image, ax=ax, label="Correlation", shrink=0.85)
     fig.tight_layout()

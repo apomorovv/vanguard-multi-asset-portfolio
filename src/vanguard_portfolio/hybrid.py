@@ -1,4 +1,4 @@
-"""Production hybrid optimizer: factor relaxation, LNS/XY windows, exact audit."""
+"""Hybrid optimizer: factor relaxation, LNS/XY windows, and exact validation."""
 
 from __future__ import annotations
 

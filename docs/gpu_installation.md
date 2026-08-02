@@ -90,12 +90,13 @@ Use a separate environment for IBM hardware submissions:
 ```bash
 conda create -n vanguard-ibm-runtime python=3.11 -y
 conda activate vanguard-ibm-runtime
-python -m pip install -e ".[ibm-runtime]"
+python -m pip install -e ".[qp,ibm-runtime,test]"
 python -m pip check
 ```
 
 The two environments can use the same repository checkout and YAML files.
 Credentials remain in IBM Runtime's account configuration, never in Git.
+The hardware run procedure is documented in `docs/ibm_qpu_experiment.md`.
 
 ## Explicit extras
 
@@ -117,7 +118,7 @@ environment.
 
 ## What the GPU accelerates
 
-The production XY-QAOA path optimizes angles with the exact fixed-cardinality
+The hybrid XY-QAOA path optimizes angles with the exact fixed-cardinality
 CPU subspace simulator, then sends the final Qiskit circuit to Aer GPU for
 sampling. For the default 16-qubit window, the subspace has only
 `C(16, 7) = 11,440` amplitudes; repeated GPU launches during COBYLA are normally

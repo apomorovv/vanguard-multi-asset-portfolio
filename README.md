@@ -1,202 +1,148 @@
-# Constraint-Safe Hybrid Multi-Asset Portfolio Optimization
+# Constraint-Safe Hybrid Portfolio Optimization
 
-This repository is the final implementation for the WISER Vanguard
-multi-asset portfolio challenge. It combines a scalable factor-risk classical
-optimizer with classical large-neighborhood search and fixed-cardinality
-XY-QAOA. Every candidate support is assigned exact continuous percentages by a
-classical allocation oracle and independently checked before it can become the
-recommended portfolio.
+This repository studies sparse, long-only multi-asset portfolio optimization
+with classical and quantum-guided neighborhood search. The full financial
+model remains classical: a factor quadratic program assigns continuous
+weights, an allocation oracle enforces hard constraints, and an independent
+validator checks every accepted portfolio. XY-QAOA proposes support changes
+inside a small fixed-cardinality window.
 
-The central claim is deliberately practical:
+The implementation is designed to answer three separate questions without
+conflating them:
 
-> Quantum computing proposes asset swaps inside a small adaptive window.
-> Classical optimization assigns percentages, enforces every financial
-> guardrail, and supplies the final answer and optimality evidence.
+1. How quickly can a valid, high-quality sparse portfolio be found?
+2. How close is that portfolio to a continuous lower bound or a Gurobi bound?
+3. Does the quantum window generator preserve cardinality and produce useful
+   candidate supports?
 
-## Final architecture
+No quantum-speedup claim is made. CPU, GPU, QPU, and solver time are recorded
+separately so the evidence can be interpreted directly.
+
+## Architecture
 
 ```mermaid
 flowchart TD
-    A["Synthetic or approved data"] --> B["Full-universe factor-QP relaxation"]
-    B --> C["Guaranteed valid exact-K portfolio"]
-    C --> D["Adaptive 12-20 asset window"]
-    D --> E["Classical tabu/LNS and XY-QAOA"]
+    A["Factor-model universe"] --> B["Full-universe factor QP"]
+    B --> C["Valid exact-K portfolio"]
+    C --> D["Adaptive change window"]
+    D --> E["Classical LNS or XY-QAOA"]
     E --> F["Fixed-support allocation oracle"]
-    F --> G["Independent hard-constraint validator"]
+    F --> G["Independent validator"]
     G -->|"better and valid"| C
-    C --> H["Time-limited Gurobi MIQP and bound"]
-    H --> I["Copilot, tables, and presentation graphics"]
+    C --> H["Optional Gurobi bound"]
 ```
 
-The existing equal-lot, QAOA/PCE, sampling-VQE, and VQE/PCE modules are
-retained as research baselines. They are not the production decision path.
+The quantum circuit never produces final portfolio weights. It samples asset
+supports; every support returns to the same continuous allocation model and
+validator used by the classical search.
 
-## What is complete
+## Optimization model
 
-- Reproducible synthetic and factor-model universes.
-- Canonical risk/return/income/cost objective.
-- Factorized continuous QP for scalable full-universe optimization.
-- Continuous SciPy, OSQP, CVXPY/Clarabel, and Gurobi backends.
-- Legacy exact equal-lot enumeration, local search, annealing, Gurobi, and SCIP.
-- Exact-cardinality continuous-weight Gurobi MIQP.
-- Guaranteed feasible sparse initialization with a SciPy/HiGHS support MILP fallback.
-- Cached fixed-support allocation oracle.
-- Adaptive weak-held/promising-unheld change windows.
-- Classical exact-window enumeration and tabu/LNS.
-- Explicit QUBO/Ising construction for the window surrogate.
-- Constraint-preserving XY-QAOA with warm or Dicke initialization.
-- Dependency-free fixed-Hamming-weight quantum simulator.
-- Optional Qiskit Aer CPU/GPU and IBM Runtime sampling.
-- Standard penalty-QAOA baseline.
-- Optional factor bands, income, stress, and empirical-CVaR guardrails.
-- Authoritative independent validation with no clipping or renormalization.
-- Streamlit/Plotly Copilot.
-- Auditable CSV/JSON/Markdown artifacts and slide-ready PNG/PDF graphics.
-
-## Canonical mathematical model
-
-For asset weights `w` and support decisions `z`, the main model minimizes
+For weights \(w\), support variables \(z\), current weights \(w^0\), and
+transaction-cost auxiliaries \(t\), the canonical objective is
 
 \[
-\lambda_r w^T\Sigma w
+\min\; \lambda_r w^T\Sigma w
 -\lambda_g\mu^T w
 -\lambda_y y^T w
-+\lambda_c c^T|w-w^0|,
++\lambda_c c^Tt.
 \]
 
-subject to, when enabled,
+The benchmark normally enforces
 
 \[
-\begin{aligned}
-&\mathbf 1^T w=1,\qquad w_i\ge0,\\
-&m_i z_i\le w_i\le u_i z_i,\\
-&\sum_i z_i=K,\\
-&L_g\le\sum_{i\in g}w_i\le U_g,\\
-&\mu^T w\ge R_{min},\quad y^T w\ge Y_{min},\\
-&\|w-w^0\|_1\le T_{max},\\
-&f_{min}\le B^T w\le f_{max},\\
-&r_s^T w\ge s_s,\quad \operatorname{CVaR}_\alpha(w)\le C_{max}.
-\end{aligned}
+\mathbf 1^T w=1,\qquad
+m_i z_i\le w_i\le u_i z_i,\qquad
+\sum_i z_i=K,
 \]
 
-For generated large universes,
+together with group bounds and a turnover cap. Eligibility, mandatory
+holdings, income, factor exposure, stress-return, and empirical-CVaR limits are
+available when the data support them.
+
+Generated large instances use
 
 \[
-\Sigma=B\Omega B^T+D,
+\Sigma=B\Omega B^T+D.
 \]
 
-so risk is evaluated as
+The solver evaluates risk from \(B\), \(\Omega\), and diagonal \(D\); it does
+not need to materialize an \(n\times n\) covariance matrix. This changes
+storage from quadratic in the number of assets to \(O(nk)\), where \(k\) is
+the number of factors.
+
+Inside an \(F\)-asset change window, XY-QAOA solves a surrogate support problem
 
 \[
-(B^Tw)^T\Omega(B^Tw)+\sum_iD_{ii}w_i^2.
-\]
-
-OSQP receives this factor form with `n_factors` auxiliary exposures instead of
-a dense quadratic block. Generated universes use a positive common market
-factor, group/style factors, and idiosyncratic risk; expected returns are linked
-to factor premia rather than sampled independently of risk. Presentation
-profiles also set `problem.current_cardinality` so turnover is measured from a
-realistic sparse incumbent instead of from thousands of equal-weight holdings.
-
-## Why XY-QAOA is the primary quantum method
-
-Inside one change window, `x_i=1` means that the corresponding asset is held.
-If `r` assets in the window must remain selected, the surrogate is
-
-\[
-\min_{x\in\{0,1\}^{F}} x^TQx+h^Tx,
+\min_{x\in\{0,1\}^F} x^TQx+h^Tx,
 \qquad \sum_i x_i=r.
 \]
 
-The XY mixer applies `10 <-> 01` exchanges. Starting from an `r`-asset
-bitstring therefore keeps every ideal sample at Hamming weight `r`; the main
-solver does not tune a cardinality penalty. A standard X-mixer penalty-QAOA is
-included only as a baseline.
+The XY mixer exchanges `10` and `01`. Starting from an \(r\)-asset bitstring
+therefore preserves the number of selected window assets in ideal execution.
 
-The surrogate uses equal proxy notionals, covariance with frozen holdings,
-return, income, estimated transaction cost, and binding-group pressure. It is
-not trusted as the final financial score. Each sampled support is sent to the
-same exact allocation oracle as the classical search.
+## What is implemented
 
-## Repository modules
-
-| Module | Responsibility |
-|---|---|
-| `schemas.py` | One problem schema, preferences, optional guardrails, and normalized results |
-| `data_generation.py` | Synthetic/factor universes, CVaR scenarios, and backtest paths |
-| `portfolio_model.py` | Canonical objective, factor risk, QP data, lot helpers, CVaR |
-| `classical_continuous.py` | SciPy, OSQP, CVXPY, and Gurobi continuous solvers |
-| `classical_discrete.py` | Equal-lot baselines and exact-cardinality Gurobi MIQP |
-| `allocation.py` | Relaxation, reduced-support oracle/cache, and feasibility MILP |
-| `window_search.py` | Adaptive windows, enumeration, and tabu/LNS |
-| `qubo_builder.py` | Window QUBO and Ising conversion |
-| `quantum_solver.py` | XY-QAOA, Aer/IBM sampling, and penalty-QAOA baseline |
-| `topology.py` | Optional market-community diversity signal |
-| `hybrid.py` | Complete production pipeline |
-| `validation.py` | Independent checks of all hard constraints |
-| `metrics.py` | Financial, solver, CVaR, and backtest metrics |
-| `presentation.py` | Tables, reports, checksums, PNG/PDF graphics |
-| `copilot_app.py` | Interactive user controls and explanations |
+- Factor-native continuous optimization with SciPy, OSQP, CVXPY, or Gurobi.
+- Deterministic exact-\(K\) initialization with a HiGHS feasibility-MILP
+  fallback.
+- Cached fixed-support allocation oracle.
+- Exact window enumeration for small neighborhoods and tabu/LNS for larger
+  neighborhoods.
+- Explicit QUBO/Ising construction and constraint-preserving XY-QAOA.
+- Fixed-Hamming-weight CPU simulator for parameter optimization.
+- Optional Qiskit Aer CPU/GPU sampling and IBM Runtime QPU sampling.
+- Direct Gurobi exact-cardinality MIQP with incumbent, bound, and MIP-gap
+  reporting.
+- Independent validation without clipping or post-solve renormalization.
+- CSV/JSON tables, checksums, and matched PNG/PDF presentation graphics.
+- A matrix-free scaling study from 250 to 20,000 assets.
 
 ## Installation
 
 Python 3.10 or newer is required.
 
-Portable core and tests:
+Portable tests and core solver:
 
 ```bash
 python -m pip install -e ".[test]"
 ```
 
-Recommended classical stack:
+Classical QP and MIQP stack:
 
 ```bash
 python -m pip install -e ".[all-solvers,test]"
 ```
 
-Quantum simulator and Copilot:
-
-```bash
-python -m pip install -e ".[quantum,app,test]"
-```
-
-Portable CPU simulator, IBM Runtime, and Gurobi's Python package:
+Portable CPU Aer and IBM Runtime:
 
 ```bash
 python -m pip install -e ".[full]"
 ```
 
-Gurobi still requires a separate valid license. IBM Runtime uses the account
-configuration managed by `qiskit-ibm-runtime`; credentials are never stored in
-the repository.
-
-For an NVIDIA machine, use the compatibility-aware installer:
+On an NVIDIA system, use the compatibility-aware installer:
 
 ```bash
 python scripts/install_environment.py --profile full
 ```
 
-The CUDA 12 Aer wheel requires Qiskit 1.4, while current IBM Runtime requires
-Qiskit 2.x. The installer keeps both GPU simulator profiles isolated from IBM
-Runtime packages so later dependency upgrades cannot silently replace Aer.
-Keep IBM hardware access in a separate environment; see
-`docs/gpu_installation.md`.
+The CUDA 12 Aer wheel used by the project requires a Qiskit 1.4 environment,
+whereas current IBM Runtime uses Qiskit 2.x. Keep the Aer GPU and IBM Runtime
+profiles in separate environments. See [GPU installation](docs/gpu_installation.md)
+and [IBM QPU protocol](docs/ibm_qpu_experiment.md).
 
-## Run in increasing order of difficulty
+Gurobi requires a valid license. IBM credentials are managed by
+`qiskit-ibm-runtime` and must not be committed to the repository.
 
-### Tests
+## Reproducible runs
+
+Run the tests first:
 
 ```bash
 python -m pytest -q
 ```
 
-The same suite can run without pytest:
-
-```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
-```
-
-### Tiny exact certification and full artifact package
+Tiny certification example:
 
 ```bash
 python scripts/run_hybrid.py \
@@ -204,124 +150,121 @@ python scripts/run_hybrid.py \
   --overwrite
 ```
 
-### Final 100-asset presentation run
+Two-thousand-asset reference run:
 
 ```bash
-python scripts/run_hybrid.py \
-  --config configs/final_hybrid.yaml \
-  --overwrite
-```
-
-### 2,000-asset scale run on the server
-
-Install the detected Qiskit Aer build and the classical stack, then run:
-
-```bash
-python scripts/install_environment.py --profile full
 python scripts/run_hybrid.py \
   --config configs/large_hybrid.yaml \
   --overwrite
 ```
 
-For a classical-only diagnostic:
+The large configuration uses matrix-free factor risk, exactly 50 holdings, a
+40% L1 turnover cap (20% one-way turnover), three 16-asset change windows, and
+optional Gurobi certification.
+
+### Scaling study
+
+The default study runs seven sizes, three seeded repetitions per size, and
+writes runtime, quality, feasibility, memory, and quantum timing plots:
 
 ```bash
-python scripts/run_hybrid.py \
-  --config configs/large_hybrid.yaml \
-  --no-quantum \
+python scripts/run_hybrid_scaling.py \
+  --quantum-backend aer_gpu \
+  --output results/hybrid_scaling \
+  --overwrite
+```
+
+Default sizes are 250, 500, 1,000, 2,000, 5,000, 10,000, and 20,000 assets.
+Gurobi is attempted only through 2,000 assets; larger cases measure the
+scalable hybrid-search path and are not described as globally certified.
+Each case runs in a fresh process, and the output records peak resident memory,
+time to first valid portfolio, component runtimes, objective gaps, and all
+skipped components.
+
+A quick portable check is:
+
+```bash
+python scripts/run_hybrid_scaling.py \
+  --sizes 250 500 1000 2000 \
+  --repetitions 1 \
+  --quantum-backend subspace \
   --no-gurobi \
+  --output results/hybrid_scaling_quick \
   --overwrite
 ```
 
-### Copilot
+### IBM QPU demonstration
+
+Use a separate IBM Runtime environment and run one selected window at 8, 12,
+or 16 qubits. An explicit backend is required:
 
 ```bash
-streamlit run src/vanguard_portfolio/copilot_app.py
+python scripts/run_hybrid.py \
+  --config configs/large_hybrid.yaml \
+  --quantum-backend ibm_runtime \
+  --ibm-backend <backend-name> \
+  --window-size 12 \
+  --iterations 1 \
+  --quantum-shots 4096 \
+  --no-gurobi \
+  --output results/qpu_12 \
+  --overwrite
 ```
 
-The advanced panel exposes return, turnover, income, factor-band, stress-loss,
-and empirical-CVaR guardrails. Every change is solved and independently
-validated; infeasible combinations are reported instead of silently relaxed.
+The hardware run is a component demonstration, not a replacement for the
+20,000-asset classical factor solve. The asset-universe size and QPU width are
+decoupled: the QPU sees only the adaptive change window.
 
-## Hardware strategy
+## Evidence package
 
-| Work | Preferred hardware/software |
+Every hybrid run writes:
+
+- `hybrid_summary.csv` for objective, runtime, feasibility, and solver status;
+- `allocation_weights.csv` for weights and trades;
+- `constraint_checks.csv` for all independently recomputed guardrails;
+- `change_windows.csv` for the searched asset neighborhoods;
+- `quantum_execution.csv` for requested and actual devices, circuit resources,
+  cardinality rate, and phase timing;
+- `objective_timeline.csv` and `backtest_summary.csv`;
+- `hybrid_diagnostics.json`, `problem.json`, and a SHA-256 artifact manifest;
+- matched PNG/PDF figures, including a six-guardrail presentation view and the
+  full constraint-slack appendix.
+
+The scaling study writes raw run rows, method rows, per-size summaries, the
+resolved study configuration, CPU/GPU and package metadata, SHA-256 checksums,
+and four matched PNG/PDF figure pairs. A presentation claim should be traceable
+to these tables rather than inferred from a plot.
+
+## Repository map
+
+| Path | Purpose |
 |---|---|
-| Full-universe relaxation | CPU + OSQP factor QP |
-| Allocation oracle and classical LNS | CPU; support-reduced, cached evaluations |
-| Exact MIQP and optimality bound | Multicore CPU + Gurobi |
-| Ideal/noisy circuit development | RTX 6000 48 GB + Qiskit Aer GPU |
-| Final 8-16 qubit demonstration | IBM QPU through Runtime |
-| Copilot and plots | CPU |
+| `src/vanguard_portfolio/schemas.py` | Problem, constraints, results, and factor-native matrix operations |
+| `src/vanguard_portfolio/portfolio_model.py` | Objective, risk, QP construction, CVaR |
+| `src/vanguard_portfolio/allocation.py` | Relaxation, initialization, allocation oracle |
+| `src/vanguard_portfolio/window_search.py` | Change windows, enumeration, tabu/LNS |
+| `src/vanguard_portfolio/quantum_solver.py` | XY-QAOA, Aer, IBM Runtime, device evidence |
+| `src/vanguard_portfolio/classical_discrete.py` | Direct Gurobi MIQP and classical references |
+| `src/vanguard_portfolio/validation.py` | Independent hard-constraint checks |
+| `src/vanguard_portfolio/presentation.py` | Tables, reports, figures, checksums |
+| `scripts/run_hybrid.py` | One configured hybrid experiment |
+| `scripts/run_hybrid_scaling.py` | Multi-size, repeated scaling experiment |
+| `docs/portfolio_optimization_report.md` | Research-style problem and method report |
 
-`quantum.backend: subspace` is the portable deterministic reference. For every
-backend, QAOA angles are optimized efficiently in the exact fixed-weight CPU
-subspace. `aer_gpu` then compiles and samples the equivalent Qiskit circuit on
-the GPU. At 16 qubits this is faster than launching dozens of small GPU jobs
-during COBYLA and makes the hardware boundary auditable. The result records the
-requested backend, actual execution device, verification method, and phase
-timings. If GPU execution fails, the runner records the reason and retries Aer
-CPU so the quantum comparison is not silently lost.
-`ibm_runtime` requires an explicit backend name and is reserved for selected
-final windows. Backend calibration should be checked on the run date; no
-processor is hardcoded.
+## Interpretation limits
 
-## Fair comparisons
+- The model is single-period, long-only, and based on estimated inputs.
+- Synthetic backtests illustrate behavior; they are not forecasts or financial
+  advice.
+- Fixed-support QP optimality does not make LNS or QAOA globally optimal.
+- A time-limited Gurobi result is reported with its bound and gap, not as an
+  unconditional proof.
+- Cardinality-preserving quantum samples establish circuit correctness, not
+  quantum advantage.
+- QPU queue time and all classical preprocessing must be included in an
+  end-to-end hardware comparison.
 
-All methods use the same input, preferences, hard constraints, exact allocation
-oracle, and validator.
-
-1. Continuous factor-QP relaxation and lower bound.
-2. Valid sparse initialization.
-3. Classical exact-window enumeration on tiny windows.
-4. Classical tabu/LNS on scalable windows.
-5. Constraint-preserving XY-QAOA.
-6. Standard penalty-QAOA baseline.
-7. Cold/warm-start Gurobi exact-cardinality MIQP.
-8. Legacy equal-lot and PCE/VQE experiments as secondary ablations.
-
-Report objective versus time, time to first valid portfolio, full feasibility,
-oracle calls, duplicate supports, Gurobi bound/gap/nodes, quantum cardinality
-rate, qubits, shots, actual simulator device, CPU/GPU phase timings, transpiled
-depth/two-qubit gates, and out-of-sample risk, return, CVaR, drawdown, and
-turnover.
-
-`optimal` refers to global model status. A hybrid support is reported as a
-feasible incumbent even when its conditional fixed-support allocation QP is
-solved optimally. Gurobi `OPTIMAL` means optimal within its configured MIP
-tolerance; the numeric bound and reported gap remain the auditable certificate.
-
-## Output package
-
-Each hybrid run writes:
-
-- `hybrid_summary.csv`;
-- `allocation_weights.csv`;
-- `constraint_checks.csv`;
-- `change_windows.csv`;
-- `objective_timeline.csv`;
-- `backtest_summary.csv`;
-- `quantum_execution.csv` with sampler-device proof and phase timings;
-- `hybrid_diagnostics.json`;
-- `problem.json`;
-- `hybrid_report.md`;
-- `artifact_manifest.json` with SHA-256 checksums;
-- matched PNG and PDF plots for architecture, allocations, risk-return,
-  objective/runtime, anytime convergence, constraints, groups, factors,
-  quantum cardinality, circuit resources/timings, communities, and backtesting.
-
-Never present a plot without the matching tables, configuration, validator
-output, and checksums.
-
-## Scope and honest interpretation
-
-- The final implementation is single-period and long-only.
-- Tax lots, leverage/shorting, nonlinear market impact, and multi-period trading
-  remain future extensions.
-- PCE and topology are optional signals/ablations, not compulsory filters.
-- A QPU run is a quantum-component demonstration, not a speedup claim unless
-  equal-time end-to-end measurements prove one.
-- The continuous relaxation is a lower bound; a discrete or hybrid method
-  should not be claimed to beat it on the same minimization model.
-- The final recommendation is valid only when the independent validator reports
-  `breaches = 0`.
+The study methodology, two-thousand-asset reference result, scaling protocol,
+and limitations are documented in
+[the research report](docs/portfolio_optimization_report.md), with a
+[typeset PDF](docs/portfolio_optimization_report.pdf) included for review.

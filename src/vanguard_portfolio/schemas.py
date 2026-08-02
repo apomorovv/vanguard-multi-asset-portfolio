@@ -120,8 +120,8 @@ class PortfolioProblem:
     asset_group: list[int]
     mu: np.ndarray
     sigma: np.ndarray
-    corr: np.ndarray
-    cov: np.ndarray
+    corr: np.ndarray | None
+    cov: np.ndarray | None
     y: np.ndarray
     c: np.ndarray
     w0: np.ndarray
@@ -161,24 +161,11 @@ class PortfolioProblem:
         self.group_lower = _vector(self.group_lower, g, "group_lower")
         self.group_upper = _vector(self.group_upper, g, "group_upper")
 
-        self.corr = np.asarray(self.corr, dtype=float)
-        self.cov = np.asarray(self.cov, dtype=float)
-        for name, matrix in (("corr", self.corr), ("cov", self.cov)):
-            if matrix.shape != (n, n):
-                raise ValueError(f"{name} must have shape ({n}, {n}); got {matrix.shape}")
-            if not np.all(np.isfinite(matrix)):
-                raise ValueError(f"{name} contains non-finite values")
-            if not np.allclose(matrix, matrix.T, atol=1e-10, rtol=1e-10):
-                raise ValueError(f"{name} must be symmetric")
-        self.corr = 0.5 * (self.corr + self.corr.T)
-        self.cov = 0.5 * (self.cov + self.cov.T)
-
         if np.any(self.sigma < 0):
             raise ValueError("sigma must be nonnegative")
         if np.any(self.c < 0):
             raise ValueError("transaction-cost coefficients c must be nonnegative")
-        if not np.allclose(np.diag(self.corr), 1.0, atol=1e-8):
-            raise ValueError("corr must have a unit diagonal")
+
         complete_factor_hint = all(
             value is not None
             for value in (
@@ -187,35 +174,6 @@ class PortfolioProblem:
                 self.idiosyncratic_var,
             )
         )
-        if not complete_factor_hint and _smallest_symmetric_eigenvalue(self.cov) < -1e-9:
-            raise ValueError("cov must be positive semidefinite")
-        expected_cov = self.corr * np.outer(self.sigma, self.sigma)
-        if not np.allclose(self.cov, expected_cov, atol=1e-9, rtol=1e-7):
-            raise ValueError("cov must equal corr * outer(sigma, sigma)")
-
-        self.budget = float(self.budget)
-        if not np.isfinite(self.budget) or self.budget <= 0:
-            raise ValueError("budget must be a finite positive number")
-        if np.any(self.lower < -1e-12):
-            raise ValueError("the baseline is long-only, so lower bounds must be nonnegative")
-        if np.any(self.lower > self.upper + 1e-12):
-            raise ValueError("lower bounds must not exceed upper bounds")
-        if self.lower.sum() > self.budget + 1e-12 or self.upper.sum() < self.budget - 1e-12:
-            raise ValueError("asset bounds cannot satisfy the budget")
-        if np.any(self.group_lower < -1e-12):
-            raise ValueError("group lower bounds must be nonnegative")
-        if np.any(self.group_lower > self.group_upper + 1e-12):
-            raise ValueError("group lower bounds must not exceed group upper bounds")
-
-        if self.target_return is not None:
-            self.target_return = float(self.target_return)
-            if not np.isfinite(self.target_return):
-                raise ValueError("target_return must be finite")
-        if self.max_turnover is not None:
-            self.max_turnover = float(self.max_turnover)
-            if not np.isfinite(self.max_turnover) or self.max_turnover < 0:
-                raise ValueError("max_turnover must be finite and nonnegative")
-
         factor_parts = (
             self.factor_loadings,
             self.factor_cov,
@@ -246,16 +204,80 @@ class PortfolioProblem:
                 self.factor_names = [str(name) for name in self.factor_names]
                 if len(self.factor_names) != k or len(set(self.factor_names)) != k:
                     raise ValueError("factor_names must contain one unique name per factor")
-            reconstructed = (
-                self.factor_loadings @ self.factor_cov @ self.factor_loadings.T
-                + np.diag(self.idiosyncratic_var)
+            factor_variance = np.einsum(
+                "ij,jk,ik->i",
+                self.factor_loadings,
+                self.factor_cov,
+                self.factor_loadings,
+                optimize=True,
             )
-            if not np.allclose(reconstructed, self.cov, atol=1e-9, rtol=1e-7):
-                raise ValueError("factor model must reconstruct cov")
+            factor_variance += self.idiosyncratic_var
+            if not np.allclose(
+                factor_variance,
+                np.square(self.sigma),
+                atol=1e-10,
+                rtol=1e-7,
+            ):
+                raise ValueError("factor model diagonal must equal sigma squared")
         elif self.factor_names not in (None, []):
             raise ValueError("factor_names requires a complete factor model")
         else:
             self.factor_names = None
+
+        if (self.corr is None) != (self.cov is None):
+            raise ValueError("corr and cov must either both be supplied or both be omitted")
+        if self.corr is None:
+            if not complete_factor_hint:
+                raise ValueError("corr and cov may be omitted only for a complete factor model")
+        else:
+            self.corr = np.asarray(self.corr, dtype=float)
+            self.cov = np.asarray(self.cov, dtype=float)
+            for name, matrix in (("corr", self.corr), ("cov", self.cov)):
+                if matrix.shape != (n, n):
+                    raise ValueError(f"{name} must have shape ({n}, {n}); got {matrix.shape}")
+                if not np.all(np.isfinite(matrix)):
+                    raise ValueError(f"{name} contains non-finite values")
+                if not np.allclose(matrix, matrix.T, atol=1e-10, rtol=1e-10):
+                    raise ValueError(f"{name} must be symmetric")
+            self.corr = 0.5 * (self.corr + self.corr.T)
+            self.cov = 0.5 * (self.cov + self.cov.T)
+            if not np.allclose(np.diag(self.corr), 1.0, atol=1e-8):
+                raise ValueError("corr must have a unit diagonal")
+            if not complete_factor_hint and _smallest_symmetric_eigenvalue(self.cov) < -1e-9:
+                raise ValueError("cov must be positive semidefinite")
+            expected_cov = self.corr * np.outer(self.sigma, self.sigma)
+            if not np.allclose(self.cov, expected_cov, atol=1e-9, rtol=1e-7):
+                raise ValueError("cov must equal corr * outer(sigma, sigma)")
+            if complete_factor_hint:
+                reconstructed = (
+                    self.factor_loadings @ self.factor_cov @ self.factor_loadings.T
+                    + np.diag(self.idiosyncratic_var)
+                )
+                if not np.allclose(reconstructed, self.cov, atol=1e-9, rtol=1e-7):
+                    raise ValueError("factor model must reconstruct cov")
+
+        self.budget = float(self.budget)
+        if not np.isfinite(self.budget) or self.budget <= 0:
+            raise ValueError("budget must be a finite positive number")
+        if np.any(self.lower < -1e-12):
+            raise ValueError("the baseline is long-only, so lower bounds must be nonnegative")
+        if np.any(self.lower > self.upper + 1e-12):
+            raise ValueError("lower bounds must not exceed upper bounds")
+        if self.lower.sum() > self.budget + 1e-12 or self.upper.sum() < self.budget - 1e-12:
+            raise ValueError("asset bounds cannot satisfy the budget")
+        if np.any(self.group_lower < -1e-12):
+            raise ValueError("group lower bounds must be nonnegative")
+        if np.any(self.group_lower > self.group_upper + 1e-12):
+            raise ValueError("group lower bounds must not exceed group upper bounds")
+
+        if self.target_return is not None:
+            self.target_return = float(self.target_return)
+            if not np.isfinite(self.target_return):
+                raise ValueError("target_return must be finite")
+        if self.max_turnover is not None:
+            self.max_turnover = float(self.max_turnover)
+            if not np.isfinite(self.max_turnover) or self.max_turnover < 0:
+                raise ValueError("max_turnover must be finite and nonnegative")
 
         self._A = np.zeros((g, n), dtype=float)
         self._A[np.asarray(self.asset_group, dtype=int), np.arange(n)] = 1.0
@@ -277,8 +299,64 @@ class PortfolioProblem:
         return self.factor_loadings is not None
 
     @property
+    def has_dense_covariance(self) -> bool:
+        return self.cov is not None
+
+    @property
     def num_factors(self) -> int:
         return 0 if self.factor_loadings is None else int(self.factor_loadings.shape[1])
+
+    def covariance_matvec(self, weights: np.ndarray) -> np.ndarray:
+        """Return ``Sigma @ weights`` without requiring a dense covariance matrix."""
+        vector = _vector(weights, self.n, "weights")
+        if self.has_factor_model:
+            exposure = self.factor_loadings.T @ vector
+            return (
+                self.factor_loadings @ (self.factor_cov @ exposure)
+                + self.idiosyncratic_var * vector
+            )
+        return self.cov @ vector
+
+    def covariance_submatrix(
+        self,
+        rows: np.ndarray | list[int] | tuple[int, ...],
+        columns: np.ndarray | list[int] | tuple[int, ...] | None = None,
+    ) -> np.ndarray:
+        """Return selected covariance entries using factor algebra when needed."""
+        row_index = np.asarray(rows, dtype=int).reshape(-1)
+        column_index = row_index if columns is None else np.asarray(columns, dtype=int).reshape(-1)
+        if np.any(row_index < 0) or np.any(row_index >= self.n):
+            raise IndexError("covariance row index is out of range")
+        if np.any(column_index < 0) or np.any(column_index >= self.n):
+            raise IndexError("covariance column index is out of range")
+        if self.has_dense_covariance:
+            return self.cov[np.ix_(row_index, column_index)].copy()
+        block = (
+            self.factor_loadings[row_index]
+            @ self.factor_cov
+            @ self.factor_loadings[column_index].T
+        )
+        matches = row_index[:, None] == column_index[None, :]
+        if np.any(matches):
+            block = block + matches * self.idiosyncratic_var[row_index, None]
+        return np.asarray(block, dtype=float)
+
+    def correlation_submatrix(
+        self,
+        rows: np.ndarray | list[int] | tuple[int, ...],
+        columns: np.ndarray | list[int] | tuple[int, ...] | None = None,
+    ) -> np.ndarray:
+        """Return selected correlations without materializing the full matrix."""
+        row_index = np.asarray(rows, dtype=int).reshape(-1)
+        column_index = row_index if columns is None else np.asarray(columns, dtype=int).reshape(-1)
+        covariance = self.covariance_submatrix(row_index, column_index)
+        scale = np.outer(self.sigma[row_index], self.sigma[column_index])
+        correlation = covariance / np.maximum(scale, 1e-15)
+        return np.clip(correlation, -1.0, 1.0)
+
+    def dense_covariance_bytes(self) -> int:
+        """Bytes required for one dense float64 covariance matrix."""
+        return int(self.n) * int(self.n) * np.dtype(float).itemsize
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -292,8 +370,6 @@ class PortfolioProblem:
         for name in (
             "mu",
             "sigma",
-            "corr",
-            "cov",
             "y",
             "c",
             "w0",
@@ -303,6 +379,8 @@ class PortfolioProblem:
             "group_upper",
         ):
             result[name] = getattr(self, name).tolist()
+        result["corr"] = None if self.corr is None else self.corr.tolist()
+        result["cov"] = None if self.cov is None else self.cov.tolist()
         if self.has_factor_model:
             result.update(
                 {

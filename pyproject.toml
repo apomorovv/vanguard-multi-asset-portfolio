@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vanguard-multi-asset-portfolio"
-version = "1.0.0"
+version = "1.1.0"
 description = "Constraint-safe classical and XY-QAOA hybrid multi-asset portfolio optimization"
 readme = "README.md"
 requires-python = ">=3.10"

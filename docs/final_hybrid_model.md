@@ -1,8 +1,8 @@
-# Final hybrid portfolio model and algorithm
+# Hybrid portfolio model and algorithm
 
-This document is normative for the final production path. The earlier
-equal-lot, QAOA/PCE, VQE, and VQE/PCE documents describe retained research
-baselines.
+This document defines the model implemented by the hybrid benchmark. Legacy
+equal-lot solvers remain available as small-instance classical baselines; they
+are not part of the continuous-weight hybrid path described here.
 
 ## 1. Decisions
 
@@ -48,8 +48,10 @@ and
 w^T\Sigma w=(B^Tw)^T\Omega(B^Tw)+\sum_iD_{ii}w_i^2.
 \]
 
-`PortfolioProblem.cov` is still retained for audit and small calculations, but
-the OSQP and Gurobi formulations can use the lower-rank factor expression.
+`PortfolioProblem.cov` may be retained for small-instance audits. Large runs
+can omit both dense covariance and correlation matrices; all required
+matrix-vector products and support submatrices are reconstructed from the
+factor representation.
 
 ## 3. Hard constraints
 
@@ -242,7 +244,7 @@ recorded separately and never upgrades LNS or QAOA to global optimality.
 - XY-QAOA with the same windows and allocation oracle.
 - Standard X-mixer penalty-QAOA.
 - Gurobi exact-cardinality MIQP.
-- Optional PCE/VQE legacy ablations.
+- Optional equal-lot classical baselines on small instances.
 
 The fair performance comparison uses equal end-to-end time. A second warm-start
 comparison can give each method the same final Gurobi time.

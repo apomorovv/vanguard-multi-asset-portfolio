@@ -12,7 +12,9 @@ from vanguard_portfolio.portfolio_model import (
     lots_to_weights,
     objective_breakdown,
     objective_value,
+    risk_gradient,
     swap_objective_delta,
+    variance,
 )
 from vanguard_portfolio.schemas import Preferences
 
@@ -97,6 +99,41 @@ class PortfolioModelTests(unittest.TestCase):
         )
         self.assertEqual(data.n_factors, 3)
         self.assertLess(data.P.nnz, problem.n**2 // 2)
+
+    def test_factor_only_covariance_matches_dense_representation(self) -> None:
+        dense = generate_factor_universe(
+            n_assets=60,
+            n_groups=6,
+            n_factors=8,
+            seed=43,
+            materialize_covariance=True,
+        )
+        factor_only = generate_factor_universe(
+            n_assets=60,
+            n_groups=6,
+            n_factors=8,
+            seed=43,
+            materialize_covariance=False,
+        )
+        weights = np.random.default_rng(44).dirichlet(np.ones(60))
+        self.assertAlmostEqual(
+            variance(weights, dense),
+            variance(weights, factor_only),
+            places=13,
+        )
+        np.testing.assert_allclose(
+            risk_gradient(weights, dense),
+            risk_gradient(weights, factor_only),
+            atol=1e-13,
+        )
+        indices = np.array([1, 3, 9, 21, 55])
+        np.testing.assert_allclose(
+            factor_only.covariance_submatrix(indices),
+            dense.cov[np.ix_(indices, indices)],
+            atol=1e-13,
+        )
+        data = build_continuous_qp(factor_only, self.preferences)
+        self.assertEqual(data.n_factors, 8)
 
 
 if __name__ == "__main__":

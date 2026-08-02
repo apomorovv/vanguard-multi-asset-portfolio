@@ -188,8 +188,8 @@ def build_window_qubo(
         window_capital = problem.budget * r / max(problem.n, r)
     proxy_weight = window_capital / r
 
-    cov_window = problem.cov[np.ix_(indices, indices)]
-    cross = problem.cov[indices] @ frozen
+    cov_window = problem.covariance_submatrix(indices)
+    cross = problem.covariance_matvec(frozen)[indices]
     quadratic = preferences.lambda_risk * proxy_weight**2 * cov_window
     linear = (
         2.0 * preferences.lambda_risk * proxy_weight * cross

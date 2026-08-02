@@ -26,7 +26,7 @@ def variance(weights: np.ndarray, problem: PortfolioProblem) -> float:
             exposure @ problem.factor_cov @ exposure
             + problem.idiosyncratic_var @ np.square(w)
         )
-    return float(w @ problem.cov @ w)
+    return float(w @ problem.covariance_matvec(w))
 
 
 def risk_gradient(weights: np.ndarray, problem: PortfolioProblem) -> np.ndarray:
@@ -38,7 +38,7 @@ def risk_gradient(weights: np.ndarray, problem: PortfolioProblem) -> np.ndarray:
             problem.factor_loadings @ (problem.factor_cov @ exposure)
             + problem.idiosyncratic_var * w
         )
-    return 2.0 * (problem.cov @ w)
+    return 2.0 * problem.covariance_matvec(w)
 
 
 def empirical_cvar(
@@ -289,13 +289,14 @@ def swap_objective_delta(
     cov_w = np.asarray(cov_times_weights, dtype=float)
     lot_size = problem.budget / int(units)
 
+    pair_covariance = problem.covariance_submatrix([receiver, donor])
     variance_delta = (
         2.0 * lot_size * (cov_w[receiver] - cov_w[donor])
         + lot_size**2
         * (
-            problem.cov[receiver, receiver]
-            + problem.cov[donor, donor]
-            - 2.0 * problem.cov[donor, receiver]
+            pair_covariance[0, 0]
+            + pair_covariance[1, 1]
+            - 2.0 * pair_covariance[1, 0]
         )
     )
     linear_delta = (

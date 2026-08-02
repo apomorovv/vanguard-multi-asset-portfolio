@@ -3,6 +3,9 @@ problem:
   n_assets: 2000
   n_groups: 10
   n_factors: 12
+  # Keep B, factor covariance, and idiosyncratic variance; construct only the
+  # small covariance blocks needed by each window and allocation subproblem.
+  materialize_covariance: false
   # Start from a realistic sparse incumbent instead of liquidating a
   # 2,000-name equal-weight portfolio into 50 holdings (195% L1 turnover).
   current_cardinality: 50

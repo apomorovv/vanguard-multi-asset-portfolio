@@ -60,6 +60,26 @@ class HybridTests(unittest.TestCase):
         self.assertTrue(cached.cached)
         self.assertEqual(oracle.cache_hits, 1)
 
+    def test_allocation_oracle_accepts_factor_only_parent_problem(self) -> None:
+        problem = generate_factor_universe(
+            n_assets=40,
+            n_groups=5,
+            n_factors=6,
+            seed=41,
+            current_cardinality=10,
+            materialize_covariance=False,
+        )
+        constraints = PortfolioConstraints(
+            exact_cardinality=10,
+            minimum_active_weight=0.02,
+            maximum_weights=np.full(problem.n, 0.20),
+        )
+        oracle = AllocationOracle(problem, Preferences(), constraints)
+        support = np.flatnonzero(problem.w0 > 1e-12)
+        evaluated = oracle.evaluate(support)
+        self.assertTrue(evaluated.feasible, evaluated.reason)
+        self.assertEqual(evaluated.result.breaches, 0)
+
     def test_validator_detects_sparse_constraint_breaches(self) -> None:
         invalid = self.problem.w0.copy()
         report = validate_weights(
@@ -200,6 +220,10 @@ class HybridTests(unittest.TestCase):
             )
             self.assertGreater(
                 (Path(directory) / "plots/quantum_timing.png").stat().st_size,
+                1_000,
+            )
+            self.assertGreater(
+                (Path(directory) / "plots/key_guardrails.png").stat().st_size,
                 1_000,
             )
             with (Path(directory) / "quantum_execution.csv").open(

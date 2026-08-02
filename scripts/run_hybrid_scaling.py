@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
-"""Benchmark the final hybrid architecture from tiny to 2,000 assets."""
+"""Run a reproducible scaling study for the hybrid portfolio optimizer.
+
+Each case runs in a fresh process so peak memory and wall time are comparable.
+The default study keeps portfolio cardinality and the quantum window fixed while
+the asset universe grows from 250 to 20,000 assets. Gurobi certification is
+attempted only up to a configurable universe size; larger cases measure the
+factor-QP and neighborhood-search path without implying global certification.
+"""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import importlib.metadata
+import json
 import os
+import platform
+import resource
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+from statistics import median
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -17,10 +33,6 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "vanguard-mpl-cache"))
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from vanguard_portfolio.data_generation import generate_factor_universe
 from vanguard_portfolio.hybrid import HybridConfig, run_hybrid_optimizer
@@ -28,200 +40,865 @@ from vanguard_portfolio.quantum_solver import XYQAOAConfig
 from vanguard_portfolio.schemas import PortfolioConstraints, Preferences
 
 
-def _write(path: Path, rows: list[dict[str, object]]) -> None:
+DEFAULT_SIZES = (250, 500, 1_000, 2_000, 5_000, 10_000, 20_000)
+OUTPUT_FILENAMES = (
+    "scaling_runs.csv",
+    "scaling_methods.csv",
+    "scaling_summary.csv",
+    "scaling_environment.json",
+    "scaling_config.json",
+    "scaling_manifest.json",
+    "scaling_runtime.png",
+    "scaling_runtime.pdf",
+    "scaling_quality_and_feasibility.png",
+    "scaling_quality_and_feasibility.pdf",
+    "scaling_memory_and_first_valid.png",
+    "scaling_memory_and_first_valid.pdf",
+    "scaling_quantum.png",
+    "scaling_quantum.pdf",
+)
+RUN_COLUMNS = (
+    "study_tier",
+    "n_assets",
+    "cardinality",
+    "window_size",
+    "iterations",
+    "repetition",
+    "seed",
+    "success",
+    "best_method",
+    "best_objective",
+    "hybrid_objective",
+    "relaxation_objective",
+    "relative_gap_to_relaxation",
+    "gurobi_objective",
+    "gurobi_best_bound",
+    "gurobi_reported_gap",
+    "relative_hybrid_gap_to_gurobi",
+    "breaches",
+    "max_violation",
+    "time_to_first_valid_seconds",
+    "data_generation_seconds",
+    "relaxation_seconds",
+    "initialization_seconds",
+    "classical_window_seconds",
+    "quantum_window_seconds",
+    "window_overhead_seconds",
+    "gurobi_seconds",
+    "search_end_to_end_seconds",
+    "full_end_to_end_seconds",
+    "oracle_calls",
+    "oracle_cache_hits",
+    "peak_rss_gib",
+    "factor_risk_storage_mib",
+    "dense_covariance_gib_avoided",
+    "dense_covariance_and_correlation_gib_avoided",
+    "quantum_backend_requested",
+    "quantum_execution_device",
+    "quantum_gpu_verified",
+    "quantum_cardinality_rate",
+    "quantum_angle_seconds",
+    "quantum_sampler_seconds",
+    "quantum_allocation_seconds",
+    "certification_attempted",
+    "certification_completed",
+    "skipped_components",
+    "error",
+)
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]], preferred: Iterable[str] = ()) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = sorted({key for row in rows for key in row})
+    keys = {key for row in rows for key in row}
+    fields = [key for key in preferred if key in keys]
+    fields.extend(sorted(keys - set(fields)))
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
 
-def _plot(rows: list[dict[str, object]], output: Path) -> None:
-    successful = [row for row in rows if row.get("success")]
-    methods = sorted({str(row["method"]) for row in successful})
-    colors = ["#0B5CAD", "#00A6A6", "#F28E2B", "#7B61A8", "#D1495B"]
+def _peak_rss_gib() -> float:
+    value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    byte_count = value if sys.platform == "darwin" else value * 1024.0
+    return byte_count / 1024.0**3
 
-    fig, ax = plt.subplots(figsize=(8.2, 5.2))
-    for index, method in enumerate(methods):
-        group = sorted(
-            (row for row in successful if row["method"] == method),
-            key=lambda row: int(row["n_assets"]),
+
+def _relative_gap(value: float, reference: float) -> float:
+    return float((value - reference) / max(abs(reference), 1e-12))
+
+
+def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    size = int(spec["n_assets"])
+    cardinality = min(int(spec["cardinality"]), size - 1)
+    groups = min(int(spec["groups"]), cardinality, size)
+    seed = int(spec["seed"])
+    data_start = time.perf_counter()
+    problem = generate_factor_universe(
+        n_assets=size,
+        n_groups=groups,
+        n_factors=min(int(spec["factors"]), size),
+        seed=seed,
+        current_cardinality=cardinality,
+        materialize_covariance=bool(spec["materialize_covariance"]),
+    )
+    problem.max_turnover = float(spec["max_turnover"])
+    data_seconds = time.perf_counter() - data_start
+
+    minimum_weight = min(float(spec["minimum_active_weight"]), 0.5 / cardinality)
+    maximum_weight = max(float(spec["maximum_weight"]), 1.5 / cardinality)
+    constraints = PortfolioConstraints(
+        exact_cardinality=cardinality,
+        minimum_active_weight=minimum_weight,
+        maximum_weights=np.full(size, maximum_weight),
+    )
+    certify = bool(spec["gurobi"]) and size <= int(spec["certification_max_assets"])
+    quantum = XYQAOAConfig(
+        depth=int(spec["quantum_depth"]),
+        shots=int(spec["quantum_shots"]),
+        optimizer_maxiter=int(spec["quantum_optimizer_maxiter"]),
+        optimizer_starts=int(spec["quantum_optimizer_starts"]),
+        seed=seed,
+        initial_state="warm",
+        mixer="ring",
+        backend=str(spec["quantum_backend"]),
+        maximum_subspace_states=int(spec["maximum_subspace_states"]),
+        top_candidates=int(spec["quantum_top_candidates"]),
+        transpile_optimization_level=int(spec["transpile_optimization_level"]),
+    )
+    config = HybridConfig(
+        iterations=int(spec["iterations"]),
+        window_size=min(int(spec["window_size"]), size),
+        allocation_backend=str(spec["allocation_backend"]),
+        allocation_options={
+            "tol": float(spec["allocation_tolerance"]),
+            "max_iter": int(spec["allocation_max_iter"]),
+        },
+        initial_trials=int(spec["initial_trials"]),
+        initial_milp_time_limit=float(spec["initial_milp_time_limit"]),
+        classical_tabu_iterations=int(spec["classical_tabu_iterations"]),
+        classical_tabu_tenure=int(spec["classical_tabu_tenure"]),
+        classical_oracle_candidates=int(spec["classical_oracle_candidates"]),
+        enumerate_windows_up_to=int(spec["enumerate_windows_up_to"]),
+        run_quantum=bool(spec["quantum"]),
+        quantum=quantum,
+        run_penalty_qaoa=False,
+        use_topology=True,
+        maximum_quantum_edges=int(spec["maximum_quantum_edges"]),
+        run_gurobi_reference=certify,
+        gurobi_time_limit=float(spec["gurobi_time_limit"]),
+        gurobi_mip_gap=float(spec["gurobi_mip_gap"]),
+        seed=seed,
+    )
+    preferences = Preferences(
+        lambda_return=1.0,
+        lambda_risk=5.0,
+        lambda_income=0.5,
+        lambda_cost=1.0,
+    )
+    run = run_hybrid_optimizer(problem, preferences, constraints, config)
+    gurobi_results = [
+        result for result in run.results if result.method == "gurobi_cardinality_miqp"
+    ]
+    gurobi = gurobi_results[-1] if gurobi_results else None
+    hybrid_candidates = [
+        run.initial,
+        *[
+            result
+            for result in run.results
+            if result.method != "gurobi_cardinality_miqp" and result.success and result.feasible
+        ],
+    ]
+    hybrid_best = min(hybrid_candidates, key=lambda result: result.objective)
+    gurobi_seconds = 0.0 if gurobi is None else float(gurobi.runtime)
+    search_solver_seconds = max(float(run.runtime) - gurobi_seconds, 0.0)
+    relaxation_seconds = float(run.relaxation.runtime)
+    time_to_valid = float(run.timeline[0]["elapsed_seconds"])
+    initialization_seconds = max(time_to_valid - relaxation_seconds, 0.0)
+    classical_seconds = sum(
+        float(result.runtime)
+        for result in run.results
+        if result.method in {"classical_enumeration", "classical_tabu_lns"}
+    )
+    quantum_searches = [
+        search for search in run.quantum_searches if search.method.startswith("xy_qaoa_")
+    ]
+    quantum_rows = [search.metadata for search in quantum_searches]
+    quantum_seconds = sum(
+        float(row.get("window_end_to_end_seconds", search.runtime))
+        for search, row in zip(quantum_searches, quantum_rows)
+    )
+    window_overhead = max(
+        search_solver_seconds
+        - relaxation_seconds
+        - initialization_seconds
+        - classical_seconds
+        - quantum_seconds,
+        0.0,
+    )
+    angle_seconds = sum(float(row.get("angle_optimization_seconds", 0.0)) for row in quantum_rows)
+    sampler_seconds = sum(float(row.get("sampler_total_seconds", 0.0)) for row in quantum_rows)
+    allocation_seconds = sum(
+        float(row.get("allocation_oracle_seconds", 0.0)) for row in quantum_rows
+    )
+    cardinality_rate = (
+        float(np.mean([float(search.cardinality_feasibility_rate) for search in quantum_searches]))
+        if quantum_rows
+        else np.nan
+    )
+    execution_devices = sorted({str(row.get("execution_device", "")) for row in quantum_rows})
+    gpu_verified = bool(quantum_rows) and all(
+        bool(row.get("gpu_accelerated", False)) for row in quantum_rows
+    )
+    factor_bytes = (
+        problem.factor_loadings.nbytes
+        + problem.factor_cov.nbytes
+        + problem.idiosyncratic_var.nbytes
+    )
+    dense_covariance_gib = problem.dense_covariance_bytes() / 1024.0**3
+    best_bound = "" if gurobi is None else gurobi.metadata.get("best_bound", "")
+    reported_gap = "" if gurobi is None else gurobi.metadata.get("reported_mip_gap", "")
+    record: dict[str, Any] = {
+        "study_tier": "certified_reference" if certify else "scalable_hybrid_search",
+        "n_assets": size,
+        "cardinality": cardinality,
+        "window_size": config.window_size,
+        "iterations": config.iterations,
+        "repetition": int(spec["repetition"]),
+        "seed": seed,
+        "success": bool(run.best.success and run.best.feasible),
+        "best_method": run.best.method,
+        "best_objective": run.best.objective,
+        "hybrid_objective": hybrid_best.objective,
+        "relaxation_objective": run.relaxation.objective,
+        "relative_gap_to_relaxation": _relative_gap(
+            hybrid_best.objective,
+            run.relaxation.objective,
+        ),
+        "gurobi_objective": "" if gurobi is None else gurobi.objective,
+        "gurobi_best_bound": best_bound,
+        "gurobi_reported_gap": reported_gap,
+        "relative_hybrid_gap_to_gurobi": ""
+        if gurobi is None
+        else _relative_gap(hybrid_best.objective, gurobi.objective),
+        "breaches": int(run.best.breaches),
+        "max_violation": float(run.best.max_violation),
+        "time_to_first_valid_seconds": time_to_valid,
+        "data_generation_seconds": data_seconds,
+        "relaxation_seconds": relaxation_seconds,
+        "initialization_seconds": initialization_seconds,
+        "classical_window_seconds": classical_seconds,
+        "quantum_window_seconds": quantum_seconds,
+        "window_overhead_seconds": window_overhead,
+        "gurobi_seconds": gurobi_seconds,
+        "search_end_to_end_seconds": data_seconds + search_solver_seconds,
+        "full_end_to_end_seconds": data_seconds + float(run.runtime),
+        "oracle_calls": int(run.oracle_calls),
+        "oracle_cache_hits": int(run.oracle_cache_hits),
+        "peak_rss_gib": _peak_rss_gib(),
+        "factor_risk_storage_mib": factor_bytes / 1024.0**2,
+        "dense_covariance_gib_avoided": 0.0
+        if problem.has_dense_covariance
+        else dense_covariance_gib,
+        "dense_covariance_and_correlation_gib_avoided": 0.0
+        if problem.has_dense_covariance
+        else 2.0 * dense_covariance_gib,
+        "quantum_backend_requested": spec["quantum_backend"] if spec["quantum"] else "disabled",
+        "quantum_execution_device": ";".join(execution_devices),
+        "quantum_gpu_verified": gpu_verified,
+        "quantum_cardinality_rate": cardinality_rate,
+        "quantum_angle_seconds": angle_seconds,
+        "quantum_sampler_seconds": sampler_seconds,
+        "quantum_allocation_seconds": allocation_seconds,
+        "certification_attempted": certify,
+        "certification_completed": gurobi is not None,
+        "skipped_components": json.dumps(run.skipped, sort_keys=True),
+        "error": "",
+    }
+    method_rows = []
+    for row in run.summary_records():
+        method_rows.append(
+            {
+                "n_assets": size,
+                "repetition": int(spec["repetition"]),
+                "seed": seed,
+                **row,
+            }
         )
-        ax.plot(
-            [int(row["n_assets"]) for row in group],
-            [float(row["runtime_seconds"]) for row in group],
-            marker="o",
+    return record, method_rows
+
+
+def _worker(spec_path: Path, output_path: Path) -> int:
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    try:
+        record, methods = _run_case(spec)
+        payload = {"record": record, "methods": methods}
+    except Exception as exc:  # a failed size remains auditable in the final table
+        payload = {
+            "record": {
+                "study_tier": "run_failure",
+                "n_assets": int(spec["n_assets"]),
+                "cardinality": int(spec["cardinality"]),
+                "window_size": int(spec["window_size"]),
+                "iterations": int(spec["iterations"]),
+                "repetition": int(spec["repetition"]),
+                "seed": int(spec["seed"]),
+                "success": False,
+                "breaches": "",
+                "peak_rss_gib": _peak_rss_gib(),
+                "certification_attempted": bool(spec["gurobi"])
+                and int(spec["n_assets"]) <= int(spec["certification_max_assets"]),
+                "certification_completed": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            "methods": [],
+        }
+    output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return 0
+
+
+def _quantiles(values: list[float]) -> tuple[float, float, float]:
+    array = np.asarray(values, dtype=float)
+    return (
+        float(np.quantile(array, 0.25)),
+        float(np.quantile(array, 0.50)),
+        float(np.quantile(array, 0.75)),
+    )
+
+
+def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    numeric_fields = (
+        "search_end_to_end_seconds",
+        "full_end_to_end_seconds",
+        "time_to_first_valid_seconds",
+        "data_generation_seconds",
+        "relaxation_seconds",
+        "initialization_seconds",
+        "classical_window_seconds",
+        "quantum_window_seconds",
+        "gurobi_seconds",
+        "relative_gap_to_relaxation",
+        "relative_hybrid_gap_to_gurobi",
+        "gurobi_reported_gap",
+        "peak_rss_gib",
+        "dense_covariance_gib_avoided",
+        "quantum_angle_seconds",
+        "quantum_sampler_seconds",
+        "quantum_allocation_seconds",
+        "quantum_cardinality_rate",
+    )
+    rows: list[dict[str, Any]] = []
+    for size in sorted({int(row["n_assets"]) for row in records}):
+        group = [row for row in records if int(row["n_assets"]) == size]
+        successful = [row for row in group if row.get("success") is True]
+        summary: dict[str, Any] = {
+            "n_assets": size,
+            "runs": len(group),
+            "successful_runs": len(successful),
+            "success_rate": len(successful) / max(len(group), 1),
+            "zero_breach_rate": sum(int(row.get("breaches", 1)) == 0 for row in successful)
+            / max(len(successful), 1),
+            "certified_runs": sum(bool(row.get("certification_completed")) for row in successful),
+        }
+        for field in numeric_fields:
+            values = [
+                float(row[field])
+                for row in successful
+                if row.get(field) not in (None, "") and np.isfinite(float(row[field]))
+            ]
+            if values:
+                q1, q2, q3 = _quantiles(values)
+                summary[f"{field}_q1"] = q1
+                summary[f"{field}_median"] = q2
+                summary[f"{field}_q3"] = q3
+        rows.append(summary)
+    return rows
+
+
+def _errorbar(ax: Any, rows: list[dict[str, Any]], field: str, **kwargs: Any) -> None:
+    usable = [row for row in rows if f"{field}_median" in row]
+    x = np.asarray([int(row["n_assets"]) for row in usable])
+    center = np.asarray([float(row[f"{field}_median"]) for row in usable])
+    lower = center - np.asarray([float(row[f"{field}_q1"]) for row in usable])
+    upper = np.asarray([float(row[f"{field}_q3"]) for row in usable]) - center
+    ax.errorbar(x, center, yerr=np.vstack([lower, upper]), capsize=3, **kwargs)
+
+
+def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+
+    created: list[Path] = []
+    colors = {
+        "data_generation_seconds": "#7B61A8",
+        "relaxation_seconds": "#0B5CAD",
+        "initialization_seconds": "#6BAED6",
+        "classical_window_seconds": "#00A6A6",
+        "quantum_window_seconds": "#F28E2B",
+        "gurobi_seconds": "#D1495B",
+    }
+    labels = {
+        "data_generation_seconds": "Data generation",
+        "relaxation_seconds": "Factor-QP relaxation",
+        "initialization_seconds": "Valid sparse start",
+        "classical_window_seconds": "Classical windows",
+        "quantum_window_seconds": "XY-QAOA windows",
+        "gurobi_seconds": "Gurobi certificate",
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    _errorbar(
+        axes[0],
+        summary,
+        "search_end_to_end_seconds",
+        marker="o",
+        linewidth=2.0,
+        color="#0B5CAD",
+        label="Hybrid search (no certificate)",
+    )
+    certified_summary = [row for row in summary if int(row.get("certified_runs", 0)) > 0]
+    if certified_summary:
+        _errorbar(
+            axes[0],
+            certified_summary,
+            "full_end_to_end_seconds",
+            marker="s",
             linewidth=1.8,
-            color=colors[index % len(colors)],
-            label=method.replace("_", " "),
+            color="#D1495B",
+            label="Including Gurobi certificate",
         )
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("Asset universe size")
-    ax.set_ylabel("End-to-end seconds")
-    ax.set_title("Hybrid solver scaling with a fixed-size quantum window")
-    ax.grid(alpha=0.25, which="both")
-    ax.legend(frameon=False, fontsize=8)
+    axes[0].set_xscale("log")
+    axes[0].set_yscale("log")
+    axes[0].set_xlabel("Asset universe size")
+    axes[0].set_ylabel("Wall-clock seconds; median and IQR")
+    axes[0].set_title("End-to-end scaling")
+    axes[0].grid(alpha=0.25, which="both")
+    axes[0].legend(frameon=False, fontsize=8)
+
+    x = np.arange(len(summary))
+    bottom = np.zeros(len(summary))
+    for field, color in colors.items():
+        values = np.asarray([float(row.get(f"{field}_median", 0.0)) for row in summary])
+        axes[1].bar(x, values, bottom=bottom, color=color, label=labels[field])
+        bottom += values
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels([f"{int(row['n_assets']):,}" for row in summary], rotation=30)
+    axes[1].set_yscale("log")
+    axes[1].set_xlabel("Asset universe size")
+    axes[1].set_ylabel("Median seconds (log scale)")
+    axes[1].set_title("Runtime composition")
+    axes[1].grid(axis="y", alpha=0.25)
+    axes[1].legend(frameon=False, fontsize=7, ncol=2)
     fig.tight_layout()
-    fig.savefig(output / "scaling_runtime.png", dpi=200, bbox_inches="tight")
-    fig.savefig(output / "scaling_runtime.pdf", bbox_inches="tight")
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_runtime.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
     plt.close(fig)
 
-    best_rows = [row for row in successful if row["method"] == "best_valid"]
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.8))
-    axes[0].plot(
-        [int(row["n_assets"]) for row in best_rows],
-        [float(row["time_to_first_valid_seconds"]) for row in best_rows],
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    _errorbar(
+        axes[0],
+        summary,
+        "relative_gap_to_relaxation",
         marker="o",
+        linewidth=2.0,
         color="#00A6A6",
+        label="Hybrid incumbent vs relaxation",
+    )
+    certified = [row for row in summary if "relative_hybrid_gap_to_gurobi_median" in row]
+    if certified:
+        _errorbar(
+            axes[0],
+            certified,
+            "relative_hybrid_gap_to_gurobi",
+            marker="s",
+            linewidth=1.8,
+            color="#D1495B",
+            label="Hybrid incumbent vs Gurobi",
+        )
+    axes[0].set_xscale("log")
+    axes[0].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    axes[0].set_xlabel("Asset universe size")
+    axes[0].set_ylabel("Relative objective gap; median and IQR")
+    axes[0].set_title("Solution quality")
+    axes[0].grid(alpha=0.25, which="both")
+    axes[0].legend(frameon=False, fontsize=8)
+
+    x_values = [int(row["n_assets"]) for row in summary]
+    axes[1].plot(
+        x_values,
+        [float(row["success_rate"]) for row in summary],
+        marker="o",
+        linewidth=2.0,
+        color="#0B5CAD",
+        label="Completed",
+    )
+    axes[1].plot(
+        x_values,
+        [float(row["zero_breach_rate"]) for row in summary],
+        marker="s",
+        linewidth=1.8,
+        color="#00A6A6",
+        label="Zero breaches",
+    )
+    axes[1].set_xscale("log")
+    axes[1].set_ylim(-0.02, 1.02)
+    axes[1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    axes[1].set_xlabel("Asset universe size")
+    axes[1].set_ylabel("Run rate")
+    axes[1].set_title("Reliability and independent validation")
+    axes[1].grid(alpha=0.25, which="both")
+    axes[1].legend(frameon=False, fontsize=8)
+    fig.tight_layout()
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_quality_and_feasibility.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
+    plt.close(fig)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    _errorbar(
+        axes[0],
+        summary,
+        "peak_rss_gib",
+        marker="o",
+        linewidth=2.0,
+        color="#7B61A8",
+        label="Measured process peak RSS",
+    )
+    _errorbar(
+        axes[0],
+        summary,
+        "dense_covariance_gib_avoided",
+        marker="s",
+        linewidth=1.8,
+        color="#D1495B",
+        label="One dense covariance matrix avoided",
     )
     axes[0].set_xscale("log")
     axes[0].set_yscale("log")
     axes[0].set_xlabel("Asset universe size")
-    axes[0].set_ylabel("Seconds")
-    axes[0].set_title("Time to first valid exact-K portfolio")
+    axes[0].set_ylabel("GiB; median and IQR")
+    axes[0].set_title("Factor-native memory scaling")
     axes[0].grid(alpha=0.25, which="both")
-    axes[1].plot(
-        [int(row["n_assets"]) for row in best_rows],
-        [int(row["oracle_calls"]) for row in best_rows],
-        marker="s",
-        color="#7B61A8",
+    axes[0].legend(frameon=False, fontsize=8)
+
+    _errorbar(
+        axes[1],
+        summary,
+        "time_to_first_valid_seconds",
+        marker="o",
+        linewidth=2.0,
+        color="#00A6A6",
     )
     axes[1].set_xscale("log")
+    axes[1].set_yscale("log")
     axes[1].set_xlabel("Asset universe size")
-    axes[1].set_ylabel("Unique allocation-oracle calls")
-    axes[1].set_title("Search work remains window-controlled")
+    axes[1].set_ylabel("Seconds; median and IQR")
+    axes[1].set_title("Time to first valid exact-K portfolio")
     axes[1].grid(alpha=0.25, which="both")
     fig.tight_layout()
-    fig.savefig(output / "scaling_feasibility_and_oracle.png", dpi=200, bbox_inches="tight")
-    fig.savefig(output / "scaling_feasibility_and_oracle.pdf", bbox_inches="tight")
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_memory_and_first_valid.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
     plt.close(fig)
+
+    quantum_summary = [row for row in summary if "quantum_angle_seconds_median" in row]
+    if quantum_summary:
+        fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+        for field, label, color, marker in (
+            ("quantum_angle_seconds", "CPU angle optimization", "#7B61A8", "o"),
+            ("quantum_sampler_seconds", "Circuit sampler", "#F28E2B", "s"),
+            ("quantum_allocation_seconds", "Allocation oracle", "#00A6A6", "^"),
+        ):
+            _errorbar(
+                axes[0],
+                quantum_summary,
+                field,
+                marker=marker,
+                linewidth=1.8,
+                color=color,
+                label=label,
+            )
+        axes[0].set_xscale("log")
+        axes[0].set_yscale("log")
+        axes[0].set_xlabel("Asset universe size")
+        axes[0].set_ylabel("Seconds; median and IQR")
+        axes[0].set_title("Fixed-window quantum phase timing")
+        axes[0].grid(alpha=0.25, which="both")
+        axes[0].legend(frameon=False, fontsize=8)
+        _errorbar(
+            axes[1],
+            quantum_summary,
+            "quantum_cardinality_rate",
+            marker="o",
+            linewidth=2.0,
+            color="#0B5CAD",
+        )
+        axes[1].set_xscale("log")
+        axes[1].set_ylim(-0.02, 1.02)
+        axes[1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+        axes[1].set_xlabel("Asset universe size")
+        axes[1].set_ylabel("Fixed-cardinality shot rate")
+        axes[1].set_title("Quantum feasibility diagnostic")
+        axes[1].grid(alpha=0.25, which="both")
+        fig.tight_layout()
+        for suffix in ("png", "pdf"):
+            path = output / f"scaling_quantum.{suffix}"
+            fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+            created.append(path)
+        plt.close(fig)
+    return created
+
+
+def _environment() -> dict[str, Any]:
+    packages = {}
+    for name in ("numpy", "scipy", "osqp", "qiskit", "qiskit-aer", "gurobipy"):
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = None
+    cpu_model = platform.processor()
+    if Path("/proc/cpuinfo").is_file():
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.lower().startswith("model name"):
+                cpu_model = line.partition(":")[2].strip()
+                break
+    gpu_inventory: list[str] = []
+    try:
+        query = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version,memory.total",
+                "--format=csv,noheader",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if query.returncode == 0:
+            gpu_inventory = [line.strip() for line in query.stdout.splitlines() if line.strip()]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "python": sys.version,
+        "platform": platform.platform(),
+        "processor": cpu_model,
+        "cpu_count": os.cpu_count(),
+        "gpu_inventory": gpu_inventory,
+        "packages": packages,
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _artifact_manifest(paths: Iterable[Path], root: Path) -> dict[str, Any]:
+    files: dict[str, dict[str, Any]] = {}
+    for path in sorted({Path(value) for value in paths}):
+        payload = path.read_bytes()
+        files[str(path.relative_to(root))] = {
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    return {"algorithm": "sha256", "files": files}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sizes", nargs="+", type=int, default=list(DEFAULT_SIZES))
+    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--cardinality", type=int, default=50)
+    parser.add_argument("--groups", type=int, default=10)
+    parser.add_argument("--factors", type=int, default=12)
+    parser.add_argument("--window-size", type=int, default=16)
+    parser.add_argument("--iterations", type=int, default=3)
+    parser.add_argument("--backend", default="osqp")
+    parser.add_argument("--allocation-tolerance", type=float, default=1e-8)
+    parser.add_argument("--allocation-max-iter", type=int, default=500_000)
+    parser.add_argument("--minimum-active-weight", type=float, default=0.005)
+    parser.add_argument("--maximum-weight", type=float, default=0.04)
+    parser.add_argument("--max-turnover", type=float, default=0.40)
+    parser.add_argument("--initial-trials", type=int, default=100)
+    parser.add_argument("--initial-milp-time-limit", type=float, default=20.0)
+    parser.add_argument("--classical-tabu-iterations", type=int, default=60)
+    parser.add_argument("--classical-tabu-tenure", type=int, default=8)
+    parser.add_argument("--classical-oracle-candidates", type=int, default=3)
+    parser.add_argument("--enumerate-windows-up-to", type=int, default=5_000)
+    parser.add_argument("--quantum", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--quantum-backend",
+        choices=("subspace", "aer_cpu", "aer_gpu"),
+        default="subspace",
+    )
+    parser.add_argument("--quantum-depth", type=int, default=1)
+    parser.add_argument("--quantum-shots", type=int, default=4_096)
+    parser.add_argument("--quantum-optimizer-maxiter", type=int, default=50)
+    parser.add_argument("--quantum-optimizer-starts", type=int, default=2)
+    parser.add_argument("--quantum-top-candidates", type=int, default=128)
+    parser.add_argument("--maximum-subspace-states", type=int, default=400_000)
+    parser.add_argument("--maximum-quantum-edges", type=int, default=60)
+    parser.add_argument("--transpile-optimization-level", type=int, default=3)
+    parser.add_argument("--gurobi", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--certification-max-assets", type=int, default=2_000)
+    parser.add_argument("--gurobi-time-limit", type=float, default=60.0)
+    parser.add_argument("--gurobi-mip-gap", type=float, default=1e-3)
+    parser.add_argument("--materialize-covariance", action="store_true")
+    parser.add_argument("--seed", type=int, default=20260802)
+    parser.add_argument("--allow-failures", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--output", type=Path, default=ROOT / "results/hybrid_scaling")
+    parser.add_argument("--worker-spec", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--worker-output", type=Path, help=argparse.SUPPRESS)
+    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--sizes",
-        nargs="+",
-        type=int,
-        default=[10, 25, 50, 100, 250, 500, 1000, 2000],
-    )
-    parser.add_argument("--cardinality", type=int, default=50)
-    parser.add_argument("--window-size", type=int, default=12)
-    parser.add_argument("--backend", default="osqp")
-    parser.add_argument("--repetitions", type=int, default=1)
-    parser.add_argument("--quantum", action="store_true")
-    parser.add_argument("--aer-gpu", action="store_true")
-    parser.add_argument("--gurobi", action="store_true")
-    parser.add_argument("--seed", type=int, default=20260802)
-    parser.add_argument("--output", type=Path, default=ROOT / "results/hybrid_scaling")
-    args = parser.parse_args(argv)
-    rows: list[dict[str, object]] = []
-    for size in args.sizes:
-        groups = min(10, max(2, size // 10))
-        cardinality = min(int(args.cardinality), size - 1)
-        cardinality = max(groups, cardinality)
-        for repetition in range(args.repetitions):
-            seed = args.seed + 1000 * size + repetition
-            try:
-                problem = generate_factor_universe(
-                    n_assets=size,
-                    n_groups=groups,
-                    n_factors=min(12, max(2, size // 20)),
-                    seed=seed,
+    args = _parser().parse_args(argv)
+    if args.worker_spec is not None:
+        if args.worker_output is None:
+            raise ValueError("--worker-output is required with --worker-spec")
+        return _worker(args.worker_spec, args.worker_output)
+    if any(size < 2 for size in args.sizes):
+        raise ValueError("every asset size must be at least two")
+    if args.repetitions <= 0:
+        raise ValueError("repetitions must be positive")
+
+    existing_outputs = [
+        args.output / name
+        for name in OUTPUT_FILENAMES
+        if (args.output / name).is_file()
+    ]
+    if existing_outputs and not args.overwrite:
+        raise FileExistsError(
+            f"{args.output} contains a scaling result; pass --overwrite to replace it"
+        )
+    if args.overwrite:
+        for path in existing_outputs:
+            path.unlink()
+    args.output.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    method_rows: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="vanguard-scaling-") as directory:
+        work = Path(directory)
+        case_index = 0
+        total_cases = len(args.sizes) * args.repetitions
+        for size in args.sizes:
+            for repetition in range(args.repetitions):
+                case_index += 1
+                seed = int(args.seed + 10_000 * int(size) + repetition)
+                spec = {
+                    key: value
+                    for key, value in vars(args).items()
+                    if key not in {"worker_spec", "worker_output", "output", "sizes", "repetitions"}
+                }
+                spec.update(
+                    {
+                        "n_assets": int(size),
+                        "repetition": repetition,
+                        "seed": seed,
+                        "allocation_backend": args.backend,
+                    }
                 )
-                constraints = PortfolioConstraints(
-                    exact_cardinality=cardinality,
-                    minimum_active_weight=min(0.005, 0.5 / cardinality),
-                    maximum_weights=np.full(size, max(0.04, 1.5 / cardinality)),
+                spec_path = work / f"case-{case_index}.json"
+                result_path = work / f"result-{case_index}.json"
+                spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+                print(
+                    f"[{case_index}/{total_cases}] n={int(size):,} repetition={repetition + 1}",
+                    flush=True,
                 )
-                config = HybridConfig(
-                    iterations=1,
-                    window_size=min(args.window_size, size),
-                    allocation_backend=args.backend,
-                    allocation_options={"tol": 1e-7, "max_iter": 500_000},
-                    classical_tabu_iterations=35,
-                    classical_oracle_candidates=3,
-                    run_quantum=args.quantum,
-                    run_penalty_qaoa=False,
-                    run_gurobi_reference=args.gurobi,
-                    seed=seed,
-                    quantum=XYQAOAConfig(
-                        depth=1,
-                        shots=2_048,
-                        optimizer_maxiter=35,
-                        optimizer_starts=1,
-                        seed=seed,
-                        backend="aer_gpu" if args.aer_gpu else "subspace",
-                    ),
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        "--worker-spec",
+                        str(spec_path),
+                        "--worker-output",
+                        str(result_path),
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
                 )
-                run = run_hybrid_optimizer(problem, Preferences(), constraints, config)
-                for result in run.all_results():
-                    rows.append(
+                if not result_path.is_file():
+                    records.append(
                         {
-                            "n_assets": size,
-                            "cardinality": cardinality,
-                            "window_size": min(args.window_size, size),
+                            "study_tier": "worker_failure",
+                            "n_assets": int(size),
                             "repetition": repetition,
-                            "method": result.method,
-                            "runtime_seconds": result.runtime,
-                            "objective": result.objective,
-                            "objective_gap_to_relaxation": (
-                                result.objective - run.relaxation.objective
-                            ),
-                            "success": result.success,
-                            "feasible": result.feasible,
-                            "breaches": result.breaches,
-                            "time_to_first_valid_seconds": run.timeline[0]["elapsed_seconds"],
-                            "oracle_calls": run.oracle_calls,
-                            "oracle_cache_hits": run.oracle_cache_hits,
+                            "seed": seed,
+                            "success": False,
+                            "error": completed.stderr.strip() or completed.stdout.strip(),
                         }
                     )
-                rows.append(
-                    {
-                        "n_assets": size,
-                        "cardinality": cardinality,
-                        "window_size": min(args.window_size, size),
-                        "repetition": repetition,
-                        "method": "best_valid",
-                        "runtime_seconds": run.runtime,
-                        "objective": run.best.objective,
-                        "objective_gap_to_relaxation": (
-                            run.best.objective - run.relaxation.objective
-                        ),
-                        "success": True,
-                        "feasible": True,
-                        "breaches": 0,
-                        "time_to_first_valid_seconds": run.timeline[0]["elapsed_seconds"],
-                        "oracle_calls": run.oracle_calls,
-                        "oracle_cache_hits": run.oracle_cache_hits,
-                    }
-                )
-            except Exception as exc:
-                rows.append(
-                    {
-                        "n_assets": size,
-                        "cardinality": cardinality,
-                        "window_size": min(args.window_size, size),
-                        "repetition": repetition,
-                        "method": "run_failure",
-                        "runtime_seconds": "",
-                        "objective": "",
-                        "objective_gap_to_relaxation": "",
-                        "success": False,
-                        "feasible": False,
-                        "breaches": "",
-                        "time_to_first_valid_seconds": "",
-                        "oracle_calls": "",
-                        "oracle_cache_hits": "",
-                        "error": str(exc),
-                    }
-                )
-    args.output.mkdir(parents=True, exist_ok=True)
-    _write(args.output / "hybrid_scaling.csv", rows)
-    _plot(rows, args.output)
-    print(f"Saved {len(rows)} records and four plots to {args.output}")
+                    continue
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                records.append(payload["record"])
+                method_rows.extend(payload["methods"])
+                record = payload["record"]
+                if record.get("success"):
+                    print(
+                        "  completed: "
+                        f"search={float(record['search_end_to_end_seconds']):.3f}s, "
+                        f"breaches={record['breaches']}, "
+                        f"peak={float(record['peak_rss_gib']):.2f} GiB",
+                        flush=True,
+                    )
+                else:
+                    print(f"  failed: {record.get('error', 'unknown error')}", flush=True)
+
+    summary = _summary_rows(records)
+    runs_path = args.output / "scaling_runs.csv"
+    methods_path = args.output / "scaling_methods.csv"
+    summary_path = args.output / "scaling_summary.csv"
+    environment_path = args.output / "scaling_environment.json"
+    config_path = args.output / "scaling_config.json"
+    _write_csv(runs_path, records, RUN_COLUMNS)
+    _write_csv(methods_path, method_rows)
+    _write_csv(summary_path, summary)
+    environment_path.write_text(
+        json.dumps(_environment(), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    resolved_config = {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+        if key not in {"worker_spec", "worker_output"}
+    }
+    config_path.write_text(json.dumps(resolved_config, indent=2) + "\n", encoding="utf-8")
+    plots = _plots(summary, args.output)
+    manifest_path = args.output / "scaling_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            _artifact_manifest(
+                [
+                    runs_path,
+                    methods_path,
+                    summary_path,
+                    environment_path,
+                    config_path,
+                    *plots,
+                ],
+                args.output,
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    failures = [row for row in records if row.get("success") is not True]
+    print(
+        f"Saved {len(records)} runs, {len(method_rows)} method rows, "
+        f"{len(summary)} size summaries, and {len(plots)} plots to {args.output}"
+    )
+    if failures:
+        print(f"Failed cases: {len(failures)}; inspect scaling_runs.csv")
+        return 0 if args.allow_failures else 2
     return 0
 
 

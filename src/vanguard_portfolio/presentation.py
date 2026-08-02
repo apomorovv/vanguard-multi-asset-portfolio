@@ -86,6 +86,21 @@ def _quantum_execution_rows(run: HybridRun) -> list[dict[str, Any]]:
                 "gpu_accelerated": metadata.get("gpu_accelerated", False),
                 "device_verification": metadata.get("device_verification", ""),
                 "fallback_reason": metadata.get("fallback_reason", ""),
+                "ibm_job_id": metadata.get("job_id", ""),
+                "runtime_mode": metadata.get("runtime_mode", ""),
+                "backend_version": metadata.get("backend_version", ""),
+                "backend_calibration_timestamp": metadata.get(
+                    "backend_calibration_timestamp", ""
+                ),
+                "backend_num_qubits": metadata.get("backend_num_qubits", ""),
+                "backend_operational_at_submission": metadata.get(
+                    "backend_operational_at_submission", ""
+                ),
+                "backend_pending_jobs_at_submission": metadata.get(
+                    "backend_pending_jobs_at_submission", ""
+                ),
+                "qpu_wall_seconds": metadata.get("qpu_wall_seconds", ""),
+                "qpu_usage_seconds": metadata.get("qpu_usage_seconds", ""),
                 "qubits": metadata.get("qubits", ""),
                 "required_ones": metadata.get("required_ones", ""),
                 "subspace_states": metadata.get(
@@ -421,6 +436,126 @@ def plot_constraint_slacks(run: HybridRun, path: Path) -> dict[str, Path]:
     return _save(fig, path)
 
 
+def plot_key_guardrails(run: HybridRun, path: Path) -> dict[str, Path]:
+    """Summarize the six guardrails that matter most on a presentation slide."""
+    report = validate_weights(
+        run.best.weights,
+        run.problem,
+        constraints=run.constraints,
+        tol=VALIDATION_TOLERANCE,
+    )
+    checks = {check.name: check for check in report.checks}
+
+    def normalized_headroom(check: Any) -> float:
+        if check.violation > VALIDATION_TOLERANCE:
+            return -check.violation / max(abs(check.rhs), abs(check.lhs), 0.01)
+        if check.sense == "=":
+            return 0.0
+        return max(check.slack, 0.0) / max(abs(check.rhs), abs(check.lhs), 0.01)
+
+    def percentage_detail(check: Any) -> str:
+        return f"{check.lhs:.2%} {check.sense} {check.rhs:.2%}"
+
+    rows: list[tuple[str, Any, str]] = []
+    if "budget" in checks:
+        check = checks["budget"]
+        rows.append(("Budget", check, percentage_detail(check)))
+    if "exact_cardinality" in checks:
+        check = checks["exact_cardinality"]
+        rows.append(
+            (
+                "Exact holdings",
+                check,
+                f"{int(round(check.lhs))} {check.sense} {int(round(check.rhs))}",
+            )
+        )
+    if "max_turnover" in checks:
+        check = checks["max_turnover"]
+        rows.append(("L1 turnover", check, percentage_detail(check)))
+
+    active_minimums = [
+        check for name, check in checks.items() if name.startswith("minimum_active_weight:")
+    ]
+    if active_minimums:
+        check = min(active_minimums, key=normalized_headroom)
+        rows.append(("Minimum position", check, percentage_detail(check)))
+
+    active_assets = {
+        run.problem.asset_names[index]
+        for index in np.flatnonzero(run.best.weights > 1e-8)
+    }
+    position_limits = [
+        check
+        for name, check in checks.items()
+        if name.startswith("implementation_upper:")
+        and name.partition(":")[2] in active_assets
+    ]
+    if not position_limits:
+        position_limits = [
+            check
+            for name, check in checks.items()
+            if name.startswith("asset_upper:") and name.partition(":")[2] in active_assets
+        ]
+    if position_limits:
+        check = min(position_limits, key=normalized_headroom)
+        rows.append(("Maximum position", check, percentage_detail(check)))
+
+    group_limits = [
+        check
+        for name, check in checks.items()
+        if name.startswith("group_lower:") or name.startswith("group_upper:")
+    ]
+    if group_limits:
+        check = min(group_limits, key=normalized_headroom)
+        group_name = check.name.partition(":")[2]
+        rows.append((f"Closest group bound ({group_name})", check, percentage_detail(check)))
+
+    if not rows:
+        return {}
+    labels = [label for label, _, _ in rows]
+    values = np.asarray([normalized_headroom(check) for _, check, _ in rows])
+    details = [detail for _, _, detail in rows]
+    colors = [
+        "#D1495B"
+        if check.violation > VALIDATION_TOLERANCE
+        else ("#F28E2B" if value < 0.02 else "#00A6A6")
+        for (_, check, _), value in zip(rows, values)
+    ]
+    fig, ax = plt.subplots(figsize=(9.2, 4.8))
+    y = np.arange(len(rows))
+    ax.barh(y, values, color=colors, height=0.62)
+    ax.scatter(
+        values,
+        y,
+        color=colors,
+        edgecolor="white",
+        linewidth=0.7,
+        s=42,
+        zorder=3,
+    )
+    ax.axvline(0.0, color="#333333", linewidth=1.0)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    x_span = max(float(np.max(np.abs(values))), 0.10)
+    ax.set_xlim(min(-0.02, float(np.min(values)) * 1.15), x_span * 1.45)
+    for position, value, detail in zip(y, values, details):
+        ax.text(
+            max(value, 0.0) + 0.02 * x_span,
+            position,
+            detail,
+            va="center",
+            fontsize=9,
+            color="#34495E",
+        )
+    ax.set_xlabel("Normalized headroom (0 = binding; negative = breach)")
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+    ax.set_title(f"Key portfolio guardrails: {report.breaches} hard-constraint breaches")
+    ax.grid(axis="x", alpha=0.25)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
 def plot_group_exposure(run: HybridRun, path: Path) -> dict[str, Path]:
     current = run.problem.A @ run.problem.w0
     best = run.problem.A @ run.best.weights
@@ -623,7 +758,7 @@ def plot_correlation_communities(run: HybridRun, path: Path) -> dict[str, Path]:
             if buckets[label] and len(sampled) < display_limit:
                 sampled.append(int(buckets[label].pop(0)))
     displayed = np.asarray(sorted(sampled, key=lambda index: labels[index]), dtype=int)
-    correlation = run.problem.corr[np.ix_(displayed, displayed)]
+    correlation = run.problem.correlation_submatrix(displayed)
     fig, ax = plt.subplots(figsize=(7.0, 6.0))
     image = ax.imshow(correlation, cmap="RdBu_r", vmin=-1, vmax=1, interpolation="nearest")
     sorted_labels = labels[displayed]
@@ -800,6 +935,7 @@ def write_hybrid_artifacts(
         (lambda path: plot_objective_and_runtime(run, path), "objective_runtime.png"),
         (lambda path: plot_risk_return(run, path), "risk_return.png"),
         (lambda path: plot_objective_timeline(run, path), "objective_timeline.png"),
+        (lambda path: plot_key_guardrails(run, path), "key_guardrails.png"),
         (lambda path: plot_constraint_slacks(run, path), "constraint_slacks.png"),
         (lambda path: plot_group_exposure(run, path), "group_exposure.png"),
         (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),

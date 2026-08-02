@@ -23,7 +23,12 @@ class ValidationTests(unittest.TestCase):
         weights[0] += 0.03
         report = validate_weights(weights, self.problem)
         self.assertFalse(report.feasible)
-        self.assertTrue(any(check.name == "budget" and check.violation > 0 for check in report.checks))
+        self.assertTrue(
+            any(
+                check.name == "budget" and check.violation > 0
+                for check in report.checks
+            )
+        )
 
     def test_asset_and_group_violations_are_reported_separately(self) -> None:
         weights = np.array([0.8, 0.0, 0.0, 0.0, 0.0, 0.2])
@@ -41,7 +46,13 @@ class ValidationTests(unittest.TestCase):
         off_grid[1] -= 0.003
         report = validate_weights(off_grid, self.problem, units=20)
         self.assertFalse(report.feasible)
-        self.assertTrue(any(check.name.startswith("lot_grid:") for check in report.checks if check.violation > 1e-7))
+        self.assertTrue(
+            any(
+                check.name.startswith("lot_grid:")
+                for check in report.checks
+                if check.violation > 1e-7
+            )
+        )
 
 
 if __name__ == "__main__":
