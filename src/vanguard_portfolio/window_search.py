@@ -39,13 +39,28 @@ class WindowSearchResult:
 
 
 def binding_group_pressure(problem: PortfolioProblem, weights: np.ndarray) -> np.ndarray:
-    """Return a bounded signal: positive means adding weight helps a lower bound."""
+    """Return pressure only for genuinely near-binding group constraints.
+
+    Positive values favor additions needed by a nonzero lower bound; negative
+    values discourage additions near a finite upper bound.  A zero lower bound
+    must not reward an almost-empty group, which was the source of repeated
+    all-``Group_9`` candidate windows in the large benchmark.
+    """
     exposure = problem.A @ np.asarray(weights, dtype=float)
     lower_slack = np.maximum(exposure - problem.group_lower, 0.0)
     upper_slack = np.maximum(problem.group_upper - exposure, 0.0)
     scale = np.maximum(problem.group_upper - problem.group_lower, 1e-6)
-    lower_signal = np.exp(-lower_slack / scale)
-    upper_signal = np.exp(-upper_slack / scale)
+    activation = np.maximum(0.10 * scale, 1e-6)
+    lower_signal = np.where(
+        problem.group_lower > 1e-10,
+        np.maximum(1.0 - lower_slack / activation, 0.0),
+        0.0,
+    )
+    upper_signal = np.where(
+        problem.group_upper < problem.budget - 1e-10,
+        np.maximum(1.0 - upper_slack / activation, 0.0),
+        0.0,
+    )
     pressure = lower_signal - upper_signal
     maximum = np.max(np.abs(pressure))
     return pressure / maximum if maximum > 1e-12 else pressure
@@ -55,19 +70,53 @@ def _diverse_order(
     candidates: np.ndarray,
     score: np.ndarray,
     community_labels: np.ndarray | None,
+    group_labels: np.ndarray | None = None,
 ) -> list[int]:
     ordered = candidates[np.argsort(score[candidates])[::-1]].tolist()
-    if community_labels is None or not ordered:
+    if not ordered:
+        return []
+    if community_labels is None and group_labels is None:
         return [int(index) for index in ordered]
-    labels = np.asarray(community_labels)
-    buckets: dict[int, list[int]] = {}
+
+    communities = None if community_labels is None else np.asarray(community_labels)
+    groups = None if group_labels is None else np.asarray(group_labels)
+
+    def round_robin(values: list[int], labels: np.ndarray | None) -> list[int]:
+        if labels is None:
+            return values
+        buckets: dict[int, list[int]] = {}
+        for index in values:
+            buckets.setdefault(int(labels[index]), []).append(int(index))
+        label_order = sorted(
+            buckets,
+            key=lambda label: score[buckets[label][0]],
+            reverse=True,
+        )
+        result: list[int] = []
+        while any(buckets.values()):
+            for label in label_order:
+                if buckets[label]:
+                    result.append(buckets[label].pop(0))
+        return result
+
+    if groups is None:
+        return round_robin([int(index) for index in ordered], communities)
+
+    group_buckets: dict[int, list[int]] = {}
     for index in ordered:
-        buckets.setdefault(int(labels[index]), []).append(int(index))
+        group_buckets.setdefault(int(groups[index]), []).append(int(index))
+    for group, values in group_buckets.items():
+        group_buckets[group] = round_robin(values, communities)
+    group_order = sorted(
+        group_buckets,
+        key=lambda group: score[group_buckets[group][0]],
+        reverse=True,
+    )
     result: list[int] = []
-    while any(buckets.values()):
-        for label in sorted(buckets):
-            if buckets[label]:
-                result.append(buckets[label].pop(0))
+    while any(group_buckets.values()):
+        for group in group_order:
+            if group_buckets[group]:
+                result.append(group_buckets[group].pop(0))
     return result
 
 
@@ -81,6 +130,7 @@ def construct_change_window(
     window_size: int = 16,
     held_fraction: float = 0.45,
     community_labels: np.ndarray | None = None,
+    excluded_unheld: Iterable[int] = (),
     support_tol: float = 1e-8,
 ) -> ChangeWindow:
     """Choose weak holdings and promising replacements without shrinking the universe."""
@@ -125,7 +175,21 @@ def construct_change_window(
         + 0.10 * group_bonus
         - 0.02 * problem.c / max(float(np.max(problem.c)), 1e-12)
     )
-    promising_order = _diverse_order(unheld, promise, community_labels)
+    excluded = set(int(index) for index in excluded_unheld)
+    preferred = np.asarray([index for index in unheld if int(index) not in excluded], dtype=int)
+    fallback = np.asarray([index for index in unheld if int(index) in excluded], dtype=int)
+    group_labels = np.asarray(problem.asset_group, dtype=int)
+    promising_order = _diverse_order(
+        preferred,
+        promise,
+        community_labels,
+        group_labels,
+    ) + _diverse_order(
+        fallback,
+        promise,
+        community_labels,
+        group_labels,
+    )
     promising = tuple(promising_order[:unheld_count])
     indices = weak + promising
     frozen = tuple(sorted(support - set(indices)))
