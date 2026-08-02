@@ -51,6 +51,12 @@ class DataGenerationTests(unittest.TestCase):
         self.assertEqual(problem.num_groups, 5)
         self.assertTrue(is_psd(problem.cov))
         self.assertTrue(validate_weights(problem.w0, problem).feasible)
+        self.assertTrue(problem.has_factor_model)
+        reconstructed = (
+            problem.factor_loadings @ problem.factor_cov @ problem.factor_loadings.T
+            + np.diag(problem.idiosyncratic_var)
+        )
+        np.testing.assert_allclose(reconstructed, problem.cov, atol=1e-10)
 
     def test_large_factor_universe_uses_scalable_validation_path(self) -> None:
         problem = generate_factor_universe(n_assets=400, n_groups=8, seed=23)

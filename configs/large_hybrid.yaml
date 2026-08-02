@@ -1,0 +1,62 @@
+problem:
+  source: factor
+  n_assets: 2000
+  n_groups: 10
+  n_factors: 12
+  seed: 20260802
+  overrides:
+    target_return: null
+    max_turnover: null
+
+preferences:
+  preset: balanced
+  lambda_income: 0.5
+
+constraints:
+  exact_cardinality: 50
+  minimum_active_weight: 0.005
+  maximum_weights: 0.04
+  mandatory_assets: []
+
+hybrid:
+  iterations: 3
+  window_size: 16
+  held_fraction: 0.45
+  allocation_backend: osqp
+  allocation_options:
+    tol: 1.0e-7
+    max_iter: 500000
+  initial_trials: 500
+  initial_milp_time_limit: 60
+  classical_tabu_iterations: 60
+  classical_tabu_tenure: 8
+  classical_oracle_candidates: 3
+  enumerate_windows_up_to: 5000
+  run_quantum: true
+  run_penalty_qaoa: false
+  use_topology: true
+  maximum_quantum_edges: 60
+  run_gurobi_reference: true
+  gurobi_time_limit: 600
+  gurobi_mip_gap: 1.0e-2
+  seed: 20260802
+  quantum:
+    depth: 1
+    shots: 4096
+    optimizer_maxiter: 50
+    optimizer_starts: 2
+    seed: 20260802
+    initial_state: warm
+    mixer: ring
+    backend: aer_gpu
+    maximum_subspace_states: 400000
+    top_candidates: 128
+    transpile_optimization_level: 3
+
+backtest:
+  periods: 120
+  periods_per_year: 12
+  seed: 20260803
+
+outputs:
+  directory: results/large_hybrid

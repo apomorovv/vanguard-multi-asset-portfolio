@@ -15,7 +15,7 @@ from scipy import sparse
 from scipy.optimize import LinearConstraint, linprog, minimize
 
 from ._result import make_result
-from .portfolio_model import QPData, build_continuous_qp
+from .portfolio_model import QPData, build_continuous_qp, risk_gradient, variance
 from .schemas import (
     InfeasibleProblemError,
     PortfolioProblem,
@@ -45,12 +45,12 @@ def _linear_program_start(problem: PortfolioProblem, data: QPData) -> np.ndarray
         upper_rhs.append(-inequality_lower[finite_lower])
 
     result = linprog(
-        np.zeros(2 * problem.n),
+        np.zeros(data.q.size),
         A_ub=sparse.vstack(upper_rows, format="csr") if upper_rows else None,
         b_ub=np.concatenate(upper_rhs) if upper_rhs else None,
         A_eq=data.A[equal].tocsr() if np.any(equal) else None,
         b_eq=data.lower[equal] if np.any(equal) else None,
-        bounds=[(None, None)] * (2 * problem.n),
+        bounds=[(None, None)] * data.q.size,
         method="highs",
     )
     if not result.success:
@@ -80,19 +80,22 @@ def solve_continuous_scipy(
         x0 = _linear_program_start(problem, data)
     else:
         w0 = np.asarray(initial_weights, dtype=float).reshape(n)
-        x0 = np.concatenate([w0, np.abs(w0 - problem.w0)])
+        factor_exposure = (
+            problem.factor_loadings.T @ w0 if problem.has_factor_model else np.empty(0)
+        )
+        x0 = np.concatenate([w0, np.abs(w0 - problem.w0), factor_exposure])
     feasible_start_seconds = time.perf_counter() - feasible_start_begin
 
     def objective(x: np.ndarray) -> float:
         weights = x[:n]
         return float(
-            preferences.lambda_risk * weights @ problem.cov @ weights
+            preferences.lambda_risk * variance(weights, problem)
             + data.q @ x
         )
 
     def jacobian(x: np.ndarray) -> np.ndarray:
         gradient = data.q.copy()
-        gradient[:n] += 2.0 * preferences.lambda_risk * (problem.cov @ x[:n])
+        gradient[:n] += preferences.lambda_risk * risk_gradient(x[:n], problem)
         return gradient
 
     equality = np.isfinite(data.lower) & np.isfinite(data.upper) & np.isclose(
@@ -248,8 +251,15 @@ def solve_continuous_cvxpy(
     n = problem.n
     w = cp.Variable(n, name="w")
     t = cp.Variable(n, nonneg=True, name="t")
+    if problem.has_factor_model:
+        risk_expression = cp.quad_form(
+            problem.factor_loadings.T @ w,
+            cp.psd_wrap(problem.factor_cov),
+        ) + cp.sum(cp.multiply(problem.idiosyncratic_var, cp.square(w)))
+    else:
+        risk_expression = cp.quad_form(w, cp.psd_wrap(problem.cov))
     objective = cp.Minimize(
-        preferences.lambda_risk * cp.quad_form(w, cp.psd_wrap(problem.cov))
+        preferences.lambda_risk * risk_expression
         - preferences.lambda_return * problem.mu @ w
         - preferences.lambda_income * problem.y @ w
         + preferences.lambda_cost * problem.c @ t
@@ -349,8 +359,16 @@ def solve_continuous_gurobi(
             model.addConstr(problem.mu @ w >= problem.target_return, name="target_return")
         if problem.max_turnover is not None:
             model.addConstr(t.sum() <= problem.max_turnover, name="max_turnover")
+        if problem.has_factor_model:
+            factor_exposure = problem.factor_loadings.T @ w
+            risk_expression = (
+                factor_exposure @ problem.factor_cov @ factor_exposure
+                + (problem.idiosyncratic_var * w) @ w
+            )
+        else:
+            risk_expression = w @ problem.cov @ w
         model.setObjective(
-            preferences.lambda_risk * (w @ problem.cov @ w)
+            preferences.lambda_risk * risk_expression
             - preferences.lambda_return * (problem.mu @ w)
             - preferences.lambda_income * (problem.y @ w)
             + preferences.lambda_cost * (problem.c @ t),

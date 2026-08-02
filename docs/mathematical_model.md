@@ -1,5 +1,10 @@
 # Multi-Asset Portfolio Construction Model
 
+> **Final implementation note:** this file remains the original baseline model.
+> The exact-cardinality continuous-weight hybrid model, factor-QP decomposition,
+> optional CVaR/stress constraints, allocation oracle, and XY-QAOA window are
+> specified in [`final_hybrid_model.md`](final_hybrid_model.md).
+
 ## 1. Purpose and scope
 
 The model recommends a target allocation across asset classes while balancing

@@ -103,7 +103,12 @@ def generate_factor_universe(
     raw_cov = loadings @ loadings.T + np.diag(idiosyncratic**2)
     raw_sigma = np.sqrt(np.diag(raw_cov))
     desired_sigma = rng.uniform(0.05, 0.22, size=n_assets)
-    corr = raw_cov / np.outer(raw_sigma, raw_sigma)
+    scale = desired_sigma / raw_sigma
+    scaled_loadings = loadings * scale[:, None]
+    idiosyncratic_var = (idiosyncratic * scale) ** 2
+    factor_cov = np.eye(n_factors)
+    cov = scaled_loadings @ factor_cov @ scaled_loadings.T + np.diag(idiosyncratic_var)
+    corr = cov / np.outer(desired_sigma, desired_sigma)
     # BB' + D is positive definite by construction, and positive diagonal
     # scaling preserves PSD.  A full eigen-projection here used to impose an
     # unnecessary O(n^3) cost on every large generated universe.
@@ -133,6 +138,50 @@ def generate_factor_universe(
         upper=upper,
         group_lower=group_lower,
         group_upper=group_upper,
+        factor_names=[f"Factor_{index}" for index in range(n_factors)],
+        factor_loadings=scaled_loadings,
+        factor_cov=factor_cov,
+        idiosyncratic_var=idiosyncratic_var,
+    )
+
+
+def generate_return_scenarios(
+    problem: PortfolioProblem,
+    n_scenarios: int = 500,
+    seed: int = 0,
+) -> np.ndarray:
+    """Draw reproducible one-period multivariate-normal return scenarios.
+
+    Synthetic scenarios are deliberately separate from the canonical problem
+    so CVaR remains an optional, data-dependent guardrail rather than a hidden
+    default assumption.
+    """
+    if int(n_scenarios) <= 1:
+        raise ValueError("n_scenarios must exceed one")
+    rng = np.random.default_rng(seed)
+    return rng.multivariate_normal(
+        mean=problem.mu,
+        cov=problem.cov,
+        size=int(n_scenarios),
+        method="cholesky",
+    )
+
+
+def generate_backtest_returns(
+    problem: PortfolioProblem,
+    periods: int = 120,
+    periods_per_year: int = 12,
+    seed: int = 1,
+) -> np.ndarray:
+    """Generate an independent synthetic out-of-sample path for demonstrations."""
+    if int(periods) <= 1 or int(periods_per_year) <= 0:
+        raise ValueError("periods must exceed one and periods_per_year must be positive")
+    rng = np.random.default_rng(seed)
+    return rng.multivariate_normal(
+        mean=problem.mu / int(periods_per_year),
+        cov=problem.cov / int(periods_per_year),
+        size=int(periods),
+        method="cholesky",
     )
 
 
@@ -153,6 +202,8 @@ def load_problem(path: str | Path) -> PortfolioProblem:
 __all__ = [
     "PortfolioProblem",
     "generate_factor_universe",
+    "generate_backtest_returns",
+    "generate_return_scenarios",
     "generate_synthetic_universe",
     "is_psd",
     "load_problem",

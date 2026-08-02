@@ -1,6 +1,30 @@
 # Results directory guide
 
-This directory contains the evidence produced by the classical portfolio benchmark: raw solver runs, summary tables, validation information, and plots.
+## Final hybrid result folders
+
+`scripts/run_hybrid.py` writes each final run to a named subdirectory such as
+`results/tiny_hybrid/`, `results/final_hybrid/`, or `results/large_hybrid/`.
+Keep the complete folder together. Its standard evidence package is:
+
+- `hybrid_summary.csv`: one comparable row per relaxation/classical/quantum/exact method;
+- `allocation_weights.csv`: exact weights, trades, groups, and support decisions;
+- `constraint_checks.csv`: every independently recomputed hard guardrail;
+- `change_windows.csv`: which weak holdings and promising replacements were compared;
+- `objective_timeline.csv`: best-valid objective versus end-to-end time;
+- `backtest_summary.csv`: synthetic out-of-sample return, volatility, CVaR, drawdown, and wealth;
+- `hybrid_diagnostics.json`: solver, oracle, quantum, circuit, and skipped-component details;
+- `hybrid_report.md`: nontechnical interpretation;
+- `artifact_manifest.json`: SHA-256 checksums and sizes;
+- `plots/*.png` and matched vector `plots/*.pdf` graphics.
+
+The required acceptance condition remains `feasible = True` and
+`breaches = 0`. XY-QAOA results in these folders are supports that have already
+passed through the exact continuous allocation oracle and validator—not raw
+bitstrings presented as portfolios.
+
+The sections below document the retained classical equal-lot benchmark output.
+
+This directory contains the evidence produced by the classical portfolio benchmark: raw solver runs, summary tables, validation information, and plots. This guide assumes no previous knowledge of portfolio optimization.
 
 ## The short version
 

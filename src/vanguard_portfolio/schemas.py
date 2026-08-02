@@ -96,6 +96,15 @@ def _vector(value: Any, length: int, name: str) -> np.ndarray:
     return array.copy()
 
 
+def _matrix(value: Any, shape: tuple[int, int], name: str) -> np.ndarray:
+    array = np.asarray(value, dtype=float)
+    if array.shape != shape:
+        raise ValueError(f"{name} must have shape {shape}; got {array.shape}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} contains non-finite values")
+    return array.copy()
+
+
 @dataclass
 class PortfolioProblem:
     """All data and hard constraints for one portfolio instance.
@@ -123,6 +132,10 @@ class PortfolioProblem:
     budget: float = 1.0
     target_return: float | None = None
     max_turnover: float | None = None
+    factor_names: list[str] | None = None
+    factor_loadings: np.ndarray | None = None
+    factor_cov: np.ndarray | None = None
+    idiosyncratic_var: np.ndarray | None = None
     _A: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -166,7 +179,15 @@ class PortfolioProblem:
             raise ValueError("transaction-cost coefficients c must be nonnegative")
         if not np.allclose(np.diag(self.corr), 1.0, atol=1e-8):
             raise ValueError("corr must have a unit diagonal")
-        if _smallest_symmetric_eigenvalue(self.cov) < -1e-9:
+        complete_factor_hint = all(
+            value is not None
+            for value in (
+                self.factor_loadings,
+                self.factor_cov,
+                self.idiosyncratic_var,
+            )
+        )
+        if not complete_factor_hint and _smallest_symmetric_eigenvalue(self.cov) < -1e-9:
             raise ValueError("cov must be positive semidefinite")
         expected_cov = self.corr * np.outer(self.sigma, self.sigma)
         if not np.allclose(self.cov, expected_cov, atol=1e-9, rtol=1e-7):
@@ -195,6 +216,47 @@ class PortfolioProblem:
             if not np.isfinite(self.max_turnover) or self.max_turnover < 0:
                 raise ValueError("max_turnover must be finite and nonnegative")
 
+        factor_parts = (
+            self.factor_loadings,
+            self.factor_cov,
+            self.idiosyncratic_var,
+        )
+        if any(value is not None for value in factor_parts):
+            if not all(value is not None for value in factor_parts):
+                raise ValueError(
+                    "factor_loadings, factor_cov, and idiosyncratic_var must be supplied together"
+                )
+            loadings = np.asarray(self.factor_loadings, dtype=float)
+            if loadings.ndim != 2 or loadings.shape[0] != n or loadings.shape[1] == 0:
+                raise ValueError("factor_loadings must have shape (n_assets, n_factors)")
+            k = int(loadings.shape[1])
+            self.factor_loadings = _matrix(loadings, (n, k), "factor_loadings")
+            self.factor_cov = _matrix(self.factor_cov, (k, k), "factor_cov")
+            self.factor_cov = 0.5 * (self.factor_cov + self.factor_cov.T)
+            self.idiosyncratic_var = _vector(
+                self.idiosyncratic_var, n, "idiosyncratic_var"
+            )
+            if np.any(self.idiosyncratic_var < -1e-12):
+                raise ValueError("idiosyncratic_var must be nonnegative")
+            if _smallest_symmetric_eigenvalue(self.factor_cov) < -1e-9:
+                raise ValueError("factor_cov must be positive semidefinite")
+            if self.factor_names is None:
+                self.factor_names = [f"Factor_{index}" for index in range(k)]
+            else:
+                self.factor_names = [str(name) for name in self.factor_names]
+                if len(self.factor_names) != k or len(set(self.factor_names)) != k:
+                    raise ValueError("factor_names must contain one unique name per factor")
+            reconstructed = (
+                self.factor_loadings @ self.factor_cov @ self.factor_loadings.T
+                + np.diag(self.idiosyncratic_var)
+            )
+            if not np.allclose(reconstructed, self.cov, atol=1e-9, rtol=1e-7):
+                raise ValueError("factor model must reconstruct cov")
+        elif self.factor_names not in (None, []):
+            raise ValueError("factor_names requires a complete factor model")
+        else:
+            self.factor_names = None
+
         self._A = np.zeros((g, n), dtype=float)
         self._A[np.asarray(self.asset_group, dtype=int), np.arange(n)] = 1.0
 
@@ -209,6 +271,14 @@ class PortfolioProblem:
     @property
     def A(self) -> np.ndarray:
         return self._A
+
+    @property
+    def has_factor_model(self) -> bool:
+        return self.factor_loadings is not None
+
+    @property
+    def num_factors(self) -> int:
+        return 0 if self.factor_loadings is None else int(self.factor_loadings.shape[1])
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -233,6 +303,15 @@ class PortfolioProblem:
             "group_upper",
         ):
             result[name] = getattr(self, name).tolist()
+        if self.has_factor_model:
+            result.update(
+                {
+                    "factor_names": list(self.factor_names or []),
+                    "factor_loadings": self.factor_loadings.tolist(),
+                    "factor_cov": self.factor_cov.tolist(),
+                    "idiosyncratic_var": self.idiosyncratic_var.tolist(),
+                }
+            )
         return result
 
     @classmethod
@@ -263,6 +342,162 @@ class Preferences:
             "lambda_income": self.lambda_income,
             "lambda_cost": self.lambda_cost,
         }
+
+
+@dataclass(frozen=True)
+class PortfolioConstraints:
+    """Optional implementation-aware guardrails shared by hybrid solvers.
+
+    The base :class:`PortfolioProblem` always owns budget, asset/group bounds,
+    return, and turnover.  This object adds sparse-support and scenario rules
+    without changing the legacy continuous and equal-lot baselines.
+    """
+
+    exact_cardinality: int | None = None
+    minimum_active_weight: float = 0.0
+    eligible_assets: tuple[int, ...] | None = None
+    mandatory_assets: tuple[int, ...] = ()
+    minimum_income: float | None = None
+    maximum_weights: np.ndarray | None = None
+    factor_lower: np.ndarray | None = None
+    factor_upper: np.ndarray | None = None
+    stress_scenarios: np.ndarray | None = None
+    stress_floors: np.ndarray | None = None
+    scenario_returns: np.ndarray | None = None
+    maximum_cvar: float | None = None
+    cvar_alpha: float = 0.95
+
+    def __post_init__(self) -> None:
+        if self.exact_cardinality is not None and int(self.exact_cardinality) <= 0:
+            raise ValueError("exact_cardinality must be positive")
+        if self.exact_cardinality is not None:
+            object.__setattr__(self, "exact_cardinality", int(self.exact_cardinality))
+        minimum = float(self.minimum_active_weight)
+        if not np.isfinite(minimum) or minimum < 0:
+            raise ValueError("minimum_active_weight must be finite and nonnegative")
+        object.__setattr__(self, "minimum_active_weight", minimum)
+        if self.minimum_income is not None:
+            value = float(self.minimum_income)
+            if not np.isfinite(value):
+                raise ValueError("minimum_income must be finite")
+            object.__setattr__(self, "minimum_income", value)
+        alpha = float(self.cvar_alpha)
+        if not 0.0 < alpha < 1.0:
+            raise ValueError("cvar_alpha must be strictly between zero and one")
+        object.__setattr__(self, "cvar_alpha", alpha)
+        if self.maximum_cvar is not None:
+            value = float(self.maximum_cvar)
+            if not np.isfinite(value):
+                raise ValueError("maximum_cvar must be finite")
+            object.__setattr__(self, "maximum_cvar", value)
+        for name in ("eligible_assets", "mandatory_assets"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            indices = tuple(sorted({int(index) for index in value}))
+            if any(index < 0 for index in indices):
+                raise ValueError(f"{name} cannot contain negative indices")
+            object.__setattr__(self, name, indices)
+        for name in (
+            "maximum_weights",
+            "factor_lower",
+            "factor_upper",
+            "stress_scenarios",
+            "stress_floors",
+            "scenario_returns",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                array = np.asarray(value, dtype=float)
+                if not np.all(np.isfinite(array)):
+                    raise ValueError(f"{name} contains non-finite values")
+                object.__setattr__(self, name, array.copy())
+
+    def validate_for(self, problem: PortfolioProblem) -> "PortfolioConstraints":
+        n = problem.n
+        eligible = set(range(n)) if self.eligible_assets is None else set(self.eligible_assets)
+        mandatory = set(self.mandatory_assets)
+        if any(index >= n for index in eligible | mandatory):
+            raise ValueError("eligible/mandatory asset index is out of range")
+        if not mandatory.issubset(eligible):
+            raise ValueError("mandatory assets must also be eligible")
+        if self.exact_cardinality is not None:
+            if self.exact_cardinality > len(eligible):
+                raise ValueError("exact_cardinality exceeds the eligible universe")
+            if self.exact_cardinality < len(mandatory):
+                raise ValueError("exact_cardinality is smaller than the mandatory set")
+            if self.minimum_active_weight * self.exact_cardinality > problem.budget + 1e-12:
+                raise ValueError("minimum active weights exceed the budget")
+        if self.maximum_weights is not None:
+            if self.maximum_weights.shape != (n,):
+                raise ValueError(f"maximum_weights must have shape ({n},)")
+            if np.any(self.maximum_weights < -1e-12):
+                raise ValueError("maximum_weights must be nonnegative")
+        factor_arrays = (self.factor_lower, self.factor_upper)
+        if any(value is not None for value in factor_arrays):
+            if not problem.has_factor_model:
+                raise ValueError("factor bounds require factor data on PortfolioProblem")
+            if not all(value is not None for value in factor_arrays):
+                raise ValueError("factor_lower and factor_upper must be supplied together")
+            expected = (problem.num_factors,)
+            if self.factor_lower.shape != expected or self.factor_upper.shape != expected:
+                raise ValueError(f"factor bounds must have shape {expected}")
+            if np.any(self.factor_lower > self.factor_upper + 1e-12):
+                raise ValueError("factor_lower must not exceed factor_upper")
+        stress_arrays = (self.stress_scenarios, self.stress_floors)
+        if any(value is not None for value in stress_arrays):
+            if not all(value is not None for value in stress_arrays):
+                raise ValueError("stress_scenarios and stress_floors must be supplied together")
+            if self.stress_scenarios.ndim != 2 or self.stress_scenarios.shape[1] != n:
+                raise ValueError("stress_scenarios must have shape (n_stresses, n_assets)")
+            if self.stress_floors.shape != (self.stress_scenarios.shape[0],):
+                raise ValueError("stress_floors must contain one floor per stress scenario")
+        if self.maximum_cvar is not None:
+            if self.scenario_returns is None:
+                raise ValueError("maximum_cvar requires scenario_returns")
+            if self.scenario_returns.ndim != 2 or self.scenario_returns.shape[1] != n:
+                raise ValueError("scenario_returns must have shape (n_scenarios, n_assets)")
+        elif self.scenario_returns is not None and (
+            self.scenario_returns.ndim != 2 or self.scenario_returns.shape[1] != n
+        ):
+            raise ValueError("scenario_returns must have shape (n_scenarios, n_assets)")
+        return self
+
+    def eligible_mask(self, n_assets: int) -> np.ndarray:
+        mask = np.zeros(n_assets, dtype=bool)
+        if self.eligible_assets is None:
+            mask[:] = True
+        else:
+            mask[np.asarray(self.eligible_assets, dtype=int)] = True
+        return mask
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "exact_cardinality": self.exact_cardinality,
+            "minimum_active_weight": self.minimum_active_weight,
+            "eligible_assets": None
+            if self.eligible_assets is None
+            else list(self.eligible_assets),
+            "mandatory_assets": list(self.mandatory_assets),
+            "minimum_income": self.minimum_income,
+            "maximum_cvar": self.maximum_cvar,
+            "cvar_alpha": self.cvar_alpha,
+        }
+        for name in (
+            "maximum_weights",
+            "factor_lower",
+            "factor_upper",
+            "stress_scenarios",
+            "stress_floors",
+            "scenario_returns",
+        ):
+            value = getattr(self, name)
+            result[name] = None if value is None else value.tolist()
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None) -> "PortfolioConstraints":
+        return cls() if data is None else cls(**dict(data))
 
 
 @dataclass

@@ -20,12 +20,14 @@ from .portfolio_model import (
 )
 from .schemas import (
     InfeasibleProblemError,
+    PortfolioConstraints,
     PortfolioProblem,
     Preferences,
     SolveResult,
     SolverSkippedError,
     SolverUnavailableError,
 )
+from .validation import validate_weights
 
 
 def bounded_lot_allocation_count(problem: PortfolioProblem, units: int) -> int:
@@ -762,6 +764,163 @@ def solve_discrete_gurobi(
     )
 
 
+def solve_cardinality_gurobi(
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    constraints: PortfolioConstraints,
+    *,
+    warm_start: np.ndarray | None = None,
+    time_limit: float = 300.0,
+    mip_gap: float = 1e-3,
+    threads: int = 0,
+    seed: int = 0,
+    mip_focus: int = 1,
+    output: bool = False,
+) -> SolveResult:
+    """Solve the canonical continuous-weight, exact-cardinality MIQP.
+
+    This is the gold-standard reference for the hybrid window methods.  The
+    legacy :func:`solve_discrete_gurobi` remains an equal-lot benchmark; this
+    function instead uses binary support variables and exact continuous
+    percentages, matching the production architecture.
+    """
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SolverUnavailableError(
+            "gurobipy is not installed; install the 'gurobi' extra"
+        ) from exc
+    constraints.validate_for(problem)
+    if constraints.exact_cardinality is None:
+        raise ValueError("solve_cardinality_gurobi requires exact_cardinality")
+    n = problem.n
+    eligible = constraints.eligible_mask(n)
+    mandatory = set(constraints.mandatory_assets) | set(
+        np.flatnonzero(problem.lower > 1e-12).tolist()
+    )
+    upper = problem.upper.copy()
+    if constraints.maximum_weights is not None:
+        upper = np.minimum(upper, constraints.maximum_weights)
+    active_lower = np.maximum(problem.lower, constraints.minimum_active_weight)
+    start = time.perf_counter()
+    try:
+        model = gp.Model("vanguard_cardinality")
+        model.Params.OutputFlag = int(output)
+        model.Params.TimeLimit = float(time_limit)
+        model.Params.MIPGap = float(mip_gap)
+        model.Params.Threads = int(threads)
+        model.Params.Seed = int(seed)
+        model.Params.MIPFocus = int(mip_focus)
+        w = model.addMVar(n, lb=0.0, ub=upper, name="w")
+        z = model.addMVar(n, vtype=GRB.BINARY, name="z")
+        t = model.addMVar(n, lb=0.0, name="t")
+        model.addConstr(w.sum() == problem.budget, name="budget")
+        model.addConstr(z.sum() == constraints.exact_cardinality, name="cardinality")
+        model.addConstr(w <= upper * z, name="link_upper")
+        model.addConstr(w >= active_lower * z, name="link_lower")
+        for index in np.flatnonzero(~eligible):
+            model.addConstr(z[int(index)] == 0, name=f"ineligible_{index}")
+        for index in sorted(mandatory):
+            model.addConstr(z[int(index)] == 1, name=f"mandatory_{index}")
+        model.addConstr(problem.A @ w >= problem.group_lower, name="group_lower")
+        model.addConstr(problem.A @ w <= problem.group_upper, name="group_upper")
+        model.addConstr(t >= w - problem.w0, name="turnover_plus")
+        model.addConstr(t >= problem.w0 - w, name="turnover_minus")
+        if problem.target_return is not None:
+            model.addConstr(problem.mu @ w >= problem.target_return, name="target_return")
+        if problem.max_turnover is not None:
+            model.addConstr(t.sum() <= problem.max_turnover, name="max_turnover")
+        if constraints.minimum_income is not None:
+            model.addConstr(problem.y @ w >= constraints.minimum_income, name="minimum_income")
+        if constraints.factor_lower is not None:
+            factor_exposure = problem.factor_loadings.T @ w
+            model.addConstr(factor_exposure >= constraints.factor_lower, name="factor_lower")
+            model.addConstr(factor_exposure <= constraints.factor_upper, name="factor_upper")
+        if constraints.stress_scenarios is not None:
+            model.addConstr(
+                constraints.stress_scenarios @ w >= constraints.stress_floors,
+                name="stress_floors",
+            )
+        if constraints.maximum_cvar is not None:
+            scenario_count = constraints.scenario_returns.shape[0]
+            eta = model.addVar(lb=-GRB.INFINITY, name="cvar_eta")
+            excess = model.addMVar(scenario_count, lb=0.0, name="cvar_excess")
+            model.addConstr(
+                excess >= -(constraints.scenario_returns @ w) - eta,
+                name="cvar_excess_definition",
+            )
+            model.addConstr(
+                eta
+                + excess.sum() / ((1.0 - constraints.cvar_alpha) * scenario_count)
+                <= constraints.maximum_cvar,
+                name="maximum_cvar",
+            )
+        if problem.has_factor_model:
+            factor_exposure = problem.factor_loadings.T @ w
+            risk_expression = (
+                factor_exposure @ problem.factor_cov @ factor_exposure
+                + (problem.idiosyncratic_var * w) @ w
+            )
+        else:
+            risk_expression = w @ problem.cov @ w
+        model.setObjective(
+            preferences.lambda_risk * risk_expression
+            - preferences.lambda_return * (problem.mu @ w)
+            - preferences.lambda_income * (problem.y @ w)
+            + preferences.lambda_cost * (problem.c @ t),
+            GRB.MINIMIZE,
+        )
+        if warm_start is not None:
+            warm = np.asarray(warm_start, dtype=float).reshape(n)
+            w.Start = warm
+            z.Start = (warm > 1e-8).astype(float)
+            t.Start = np.abs(warm - problem.w0)
+        build_seconds = time.perf_counter() - start
+        solve_start = time.perf_counter()
+        model.optimize()
+    except gp.GurobiError as exc:  # pragma: no cover - license dependent
+        raise SolverUnavailableError(f"Gurobi could not start or solve: {exc}") from exc
+    solve_seconds = time.perf_counter() - solve_start
+    success = model.SolCount > 0
+    weights = np.asarray(w.X, dtype=float) if success else np.full(n, np.nan)
+    status_names = {
+        GRB.OPTIMAL: "optimal",
+        GRB.INFEASIBLE: "infeasible",
+        GRB.INF_OR_UNBD: "infeasible_or_unbounded",
+        GRB.TIME_LIMIT: "time_limit",
+        GRB.SUBOPTIMAL: "suboptimal",
+    }
+    result = make_result(
+        method="gurobi_cardinality_miqp",
+        model_type="cardinality_miqp",
+        weights=weights,
+        problem=problem,
+        preferences=preferences,
+        runtime=time.perf_counter() - start,
+        status=status_names.get(model.Status, f"status_{model.Status}"),
+        success=success,
+        optimal=model.Status == GRB.OPTIMAL,
+        seed=seed,
+        metadata={
+            "solver_runtime": float(model.Runtime),
+            "nodes": float(model.NodeCount),
+            "model_build_seconds": build_seconds,
+            "solve_seconds": solve_seconds,
+            "best_bound": float(model.ObjBound) if success else None,
+            "reported_mip_gap": float(model.MIPGap) if success else None,
+            "support": np.flatnonzero(weights > 1e-8).tolist() if success else [],
+        },
+    )
+    report = validate_weights(weights, problem, constraints=constraints)
+    result.feasible = report.feasible
+    result.breaches = report.breaches
+    result.max_violation = report.max_violation
+    result.success = bool(result.success and report.feasible)
+    result.optimal = bool(result.optimal and report.feasible)
+    return result
+
+
 def solve_discrete_cvxpy(
     problem: PortfolioProblem,
     preferences: Preferences | None = None,
@@ -922,6 +1081,7 @@ __all__ = [
     "bounded_lot_allocation_count",
     "enumerate_feasible_lots",
     "mean_variance_discrete",
+    "solve_cardinality_gurobi",
     "solve_discrete",
     "solve_discrete_annealing",
     "solve_discrete_cvxpy",

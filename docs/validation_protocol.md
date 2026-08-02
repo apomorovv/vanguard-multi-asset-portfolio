@@ -46,6 +46,19 @@ Discrete candidates additionally satisfy:
 \frac{w_i}{B/M}\in\mathbb Z\quad\forall i.
 \]
 
+Hybrid sparse candidates additionally check exact cardinality, minimum active
+weight, eligibility, mandatory holdings, implementation-specific weight caps,
+income/factor/stress rules, and empirical CVaR when configured. The validator
+receives the full-universe weight vector even though the allocation QP is
+solved in support-reduced coordinates.
+
+Raw quantum bitstrings are not portfolios. They become reportable only after:
+
+1. fixed-Hamming-weight decoding;
+2. full-support reconstruction with frozen holdings;
+3. exact continuous allocation;
+4. independent full-universe validation.
+
 ## Gate 4: optimality relationships
 
 For each preference configuration:
@@ -54,6 +67,9 @@ For each preference configuration:
 2. Exact discrete optimum \(\le\) every feasible heuristic objective.
 3. Enumeration = optimal MIQP at identical \(M\), within tolerance.
 4. Independent continuous backends agree within numerical tolerance.
+5. The continuous relaxation is no worse than any exact-`K` feasible result.
+6. XY-QAOA ideal samples have the required window Hamming weight.
+7. A heuristic or time-limited result is never labeled globally optimal.
 
 ## Gate 5: reproducibility
 

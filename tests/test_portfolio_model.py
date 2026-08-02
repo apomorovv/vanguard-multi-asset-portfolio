@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from vanguard_portfolio.data_generation import generate_synthetic_universe
+from vanguard_portfolio.data_generation import generate_factor_universe, generate_synthetic_universe
 from vanguard_portfolio.portfolio_model import (
     build_continuous_qp,
     discrete_constraints_hold,
@@ -83,6 +83,20 @@ class PortfolioModelTests(unittest.TestCase):
             - objective_value(weights, self.problem, self.preferences)
         )
         self.assertAlmostEqual(delta, exact_delta, places=14)
+
+    def test_factor_qp_matches_direct_objective_and_is_sparse(self) -> None:
+        problem = generate_factor_universe(n_assets=20, n_groups=4, n_factors=3, seed=4)
+        data = build_continuous_qp(problem, self.preferences)
+        w = problem.w0
+        x = np.concatenate([w, np.abs(w - problem.w0), problem.factor_loadings.T @ w])
+        upper = data.P.toarray()
+        full = upper + np.triu(upper, 1).T
+        value = 0.5 * x @ full @ x + data.q @ x
+        self.assertAlmostEqual(
+            float(value), objective_value(w, problem, self.preferences), places=12
+        )
+        self.assertEqual(data.n_factors, 3)
+        self.assertLess(data.P.nnz, problem.n**2 // 2)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,42 @@ def expected_return(weights: np.ndarray, problem: PortfolioProblem) -> float:
 
 def variance(weights: np.ndarray, problem: PortfolioProblem) -> float:
     w = np.asarray(weights, dtype=float)
+    if problem.has_factor_model:
+        exposure = problem.factor_loadings.T @ w
+        return float(
+            exposure @ problem.factor_cov @ exposure
+            + problem.idiosyncratic_var @ np.square(w)
+        )
     return float(w @ problem.cov @ w)
+
+
+def risk_gradient(weights: np.ndarray, problem: PortfolioProblem) -> np.ndarray:
+    """Gradient of portfolio variance, using O(nk) factor algebra when available."""
+    w = np.asarray(weights, dtype=float)
+    if problem.has_factor_model:
+        exposure = problem.factor_loadings.T @ w
+        return 2.0 * (
+            problem.factor_loadings @ (problem.factor_cov @ exposure)
+            + problem.idiosyncratic_var * w
+        )
+    return 2.0 * (problem.cov @ w)
+
+
+def empirical_cvar(
+    weights: np.ndarray,
+    scenario_returns: np.ndarray,
+    alpha: float = 0.95,
+) -> float:
+    """Return empirical loss CVaR using the standard Rockafellar-Uryasev form."""
+    scenarios = np.asarray(scenario_returns, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    if scenarios.ndim != 2 or scenarios.shape[1] != w.size:
+        raise ValueError("scenario_returns must have shape (n_scenarios, n_assets)")
+    if not 0.0 < float(alpha) < 1.0:
+        raise ValueError("alpha must be strictly between zero and one")
+    losses = -(scenarios @ w)
+    var = float(np.quantile(losses, alpha, method="higher"))
+    return float(var + np.maximum(losses - var, 0.0).mean() / (1.0 - alpha))
 
 
 def volatility(weights: np.ndarray, problem: PortfolioProblem) -> float:
@@ -71,6 +106,9 @@ class QPData:
     lower: np.ndarray
     upper: np.ndarray
     row_names: tuple[str, ...]
+    n_weights: int
+    n_turnover: int
+    n_factors: int = 0
 
 
 def build_continuous_qp(
@@ -84,20 +122,35 @@ def build_continuous_qp(
     ``A`` so the same object can feed OSQP, SciPy, and feasibility checks.
     """
     n = problem.n
-    dim = 2 * n
+    k = problem.num_factors if problem.has_factor_model else 0
+    dim = 2 * n + k
 
     # PortfolioProblem has already validated symmetry and PSD.  Repeating a
     # dense eigendecomposition here would add O(n^3) work for every backend.
     # Build the solver matrix directly without allocating a dense 2n-by-2n
     # block containing mostly zeros.
-    risk_block = sparse.csc_matrix(2.0 * preferences.lambda_risk * problem.cov)
-    zero_block = sparse.csc_matrix((n, n), dtype=float)
-    P = sparse.block_diag((risk_block, zero_block), format="csc")
+    if k:
+        idiosyncratic_block = sparse.diags(
+            2.0 * preferences.lambda_risk * problem.idiosyncratic_var,
+            format="csc",
+        )
+        turnover_block = sparse.csc_matrix((n, n), dtype=float)
+        factor_block = sparse.csc_matrix(
+            2.0 * preferences.lambda_risk * problem.factor_cov
+        )
+        P = sparse.block_diag(
+            (idiosyncratic_block, turnover_block, factor_block), format="csc"
+        )
+    else:
+        risk_block = sparse.csc_matrix(2.0 * preferences.lambda_risk * problem.cov)
+        zero_block = sparse.csc_matrix((n, n), dtype=float)
+        P = sparse.block_diag((risk_block, zero_block), format="csc")
     q = np.concatenate(
         [
             -preferences.lambda_return * problem.mu
             - preferences.lambda_income * problem.y,
             preferences.lambda_cost * problem.c,
+            np.zeros(k),
         ]
     )
 
@@ -120,14 +173,15 @@ def build_continuous_qp(
 
     identity = sparse.eye(n, format="csr")
     zeros = sparse.csr_matrix((n, n), dtype=float)
+    factor_zeros = sparse.csr_matrix((n, k), dtype=float)
     add_block(
-        sparse.hstack((identity, zeros), format="csr"),
+        sparse.hstack((identity, zeros, factor_zeros), format="csr"),
         problem.lower,
         problem.upper,
         [f"asset:{asset}" for asset in problem.asset_names],
     )
     add_block(
-        sparse.hstack((zeros, identity), format="csr"),
+        sparse.hstack((zeros, identity, factor_zeros), format="csr"),
         0.0,
         np.inf,
         [f"turnover_aux:{asset}" for asset in problem.asset_names],
@@ -139,7 +193,11 @@ def build_continuous_qp(
     add_block(budget, problem.budget, problem.budget, ["budget"])
 
     group_matrix = sparse.hstack(
-        (sparse.csr_matrix(problem.A), sparse.csr_matrix((problem.num_groups, n))),
+        (
+            sparse.csr_matrix(problem.A),
+            sparse.csr_matrix((problem.num_groups, n)),
+            sparse.csr_matrix((problem.num_groups, k)),
+        ),
         format="csr",
     )
     add_block(
@@ -150,13 +208,13 @@ def build_continuous_qp(
     )
 
     add_block(
-        sparse.hstack((-identity, identity), format="csr"),
+        sparse.hstack((-identity, identity, factor_zeros), format="csr"),
         -problem.w0,
         np.inf,
         [f"abs_plus:{asset}" for asset in problem.asset_names],
     )
     add_block(
-        sparse.hstack((identity, identity), format="csr"),
+        sparse.hstack((identity, identity, factor_zeros), format="csr"),
         problem.w0,
         np.inf,
         [f"abs_minus:{asset}" for asset in problem.asset_names],
@@ -164,17 +222,37 @@ def build_continuous_qp(
 
     if problem.target_return is not None:
         add_block(
-            sparse.csr_matrix(np.concatenate([problem.mu, np.zeros(n)])[None, :]),
+            sparse.csr_matrix(
+                np.concatenate([problem.mu, np.zeros(n + k)])[None, :]
+            ),
             problem.target_return,
             np.inf,
             ["target_return"],
         )
     if problem.max_turnover is not None:
         add_block(
-            sparse.csr_matrix(np.concatenate([np.zeros(n), np.ones(n)])[None, :]),
+            sparse.csr_matrix(
+                np.concatenate([np.zeros(n), np.ones(n), np.zeros(k)])[None, :]
+            ),
             -np.inf,
             problem.max_turnover,
             ["max_turnover"],
+        )
+
+    if k:
+        factor_link = sparse.hstack(
+            (
+                -sparse.csr_matrix(problem.factor_loadings.T),
+                sparse.csr_matrix((k, n)),
+                sparse.eye(k, format="csr"),
+            ),
+            format="csr",
+        )
+        add_block(
+            factor_link,
+            0.0,
+            0.0,
+            [f"factor_definition:{name}" for name in problem.factor_names],
         )
 
     return QPData(
@@ -184,6 +262,9 @@ def build_continuous_qp(
         lower=np.concatenate(lows),
         upper=np.concatenate(highs),
         row_names=tuple(names),
+        n_weights=n,
+        n_turnover=n,
+        n_factors=k,
     )
 
 
@@ -291,12 +372,14 @@ __all__ = [
     "QPData",
     "build_continuous_qp",
     "discrete_constraints_hold",
+    "empirical_cvar",
     "expected_return",
     "income_yield",
     "lot_bounds",
     "lots_to_weights",
     "objective_breakdown",
     "objective_value",
+    "risk_gradient",
     "transaction_cost",
     "turnover",
     "swap_objective_delta",

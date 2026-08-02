@@ -15,3 +15,12 @@ pytest-cov>=5.0
 
 # Gurobi requires a separate license. Uncomment if it is not already installed.
 # gurobipy>=11.0
+
+# Quantum window simulation and IBM hardware (optional).
+# qiskit>=2.0
+# qiskit-aer>=0.17
+# qiskit-ibm-runtime>=0.40
+
+# Interactive Copilot (optional).
+# streamlit>=1.40
+# plotly>=5.24
