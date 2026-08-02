@@ -102,10 +102,22 @@ class HybridRun:
                 bound = float(value) if bound is None else max(bound, float(value))
         rows: list[dict[str, Any]] = []
         for result in self.all_results():
+            if result.model_type == "continuous_relaxation":
+                certification = "continuous_relaxation_lower_bound"
+            elif result.method == "gurobi_cardinality_miqp" and result.optimal:
+                certification = "global_mip_optimal_within_tolerance"
+            elif result.optimal:
+                certification = "globally_optimal"
+            else:
+                certification = "feasible_incumbent"
             rows.append(
                 {
                     "method": result.method,
                     "model_type": result.model_type,
+                    "status": result.status,
+                    "stage": result.metadata.get("stage", ""),
+                    "iteration": result.metadata.get("iteration", ""),
+                    "certification": certification,
                     "objective": result.objective,
                     "gap_to_best": result.objective - reference,
                     "gap_to_certified_bound": ""
@@ -114,6 +126,7 @@ class HybridRun:
                     "runtime_seconds": result.runtime,
                     "success": result.success,
                     "optimal": result.optimal,
+                    "allocation_optimal": result.metadata.get("allocation_optimal", ""),
                     "feasible": result.feasible,
                     "breaches": result.breaches,
                     "max_violation": result.max_violation,
@@ -145,7 +158,17 @@ def _copy_as_method(
         model_type="hybrid_sparse",
         weights=original.weights.copy(),
         runtime=float(runtime),
-        metadata={**original.metadata, **metadata},
+        # The QP is optimal conditional on this support; the surrounding
+        # support search is still heuristic and must not be reported as a
+        # globally optimal portfolio.
+        optimal=False,
+        metadata={
+            **original.metadata,
+            "allocation_method": original.method,
+            "allocation_status": original.status,
+            "allocation_optimal": original.optimal,
+            **metadata,
+        },
     )
 
 
@@ -178,7 +201,16 @@ def run_hybrid_optimizer(
         solver_options=dict(config.allocation_options),
     )
     if not relaxation.success:
-        raise ValueError(f"continuous relaxation failed: {relaxation.status}")
+        raise ValueError(
+            "continuous relaxation was not accepted: "
+            f"backend={config.allocation_backend!r}, "
+            f"native_status={relaxation.status!r}, "
+            f"validated_feasible={relaxation.feasible}, "
+            f"breaches={relaxation.breaches}, "
+            f"max_violation={relaxation.max_violation:.3e}. "
+            "If the native solver converged, set allocation_options.tol "
+            "comfortably below the validator tolerance (1e-7)."
+        )
     oracle = AllocationOracle(
         problem,
         preferences,
@@ -217,6 +249,7 @@ def run_hybrid_optimizer(
     communities = (
         market_communities(problem, seed=config.seed) if config.use_topology else None
     )
+    explored_unheld: set[int] = set()
 
     for iteration in range(int(config.iterations)):
         try:
@@ -229,11 +262,13 @@ def run_hybrid_optimizer(
                 window_size=config.window_size,
                 held_fraction=config.held_fraction,
                 community_labels=communities,
+                excluded_unheld=explored_unheld,
             )
         except ValueError as exc:
             skipped[f"iteration_{iteration}:window"] = str(exc)
             break
         windows.append(window)
+        explored_unheld.update(window.promising_unheld)
         qubo = build_window_qubo(
             problem,
             preferences,
@@ -271,6 +306,7 @@ def run_hybrid_optimizer(
             classical.runtime,
             {
                 **classical.metadata,
+                "stage": "window_search",
                 "iteration": iteration,
                 "window_size": qubo.n,
                 "window_required_ones": qubo.required_ones,
@@ -299,6 +335,7 @@ def run_hybrid_optimizer(
                     quantum.runtime + quantum_allocations.runtime,
                     {
                         **quantum.metadata,
+                        "stage": "window_search",
                         "iteration": iteration,
                         "cardinality_feasibility_rate": quantum.cardinality_feasibility_rate,
                         "expected_surrogate_energy": quantum.expected_surrogate_energy,
@@ -349,6 +386,7 @@ def run_hybrid_optimizer(
                     penalty_quantum.runtime + penalty_allocations.runtime,
                     {
                         **penalty_quantum.metadata,
+                        "stage": "window_search",
                         "iteration": iteration,
                         "cardinality_penalty": penalty,
                         "cardinality_feasibility_rate": (
@@ -384,6 +422,9 @@ def run_hybrid_optimizer(
                 time_limit=config.gurobi_time_limit,
                 mip_gap=config.gurobi_mip_gap,
                 seed=config.seed,
+            )
+            gurobi.metadata.update(
+                {"stage": "global_certification", "iteration": len(windows)}
             )
             results.append(gurobi)
             if gurobi.success and gurobi.feasible and gurobi.objective < current.objective:
