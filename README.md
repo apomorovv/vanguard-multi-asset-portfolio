@@ -31,9 +31,25 @@ continuous allocation model and validator used by the classical search.
 
 ## Canonical Objective Function
 
-For weights $w$, support variables $z$, current weights $w^0$, and transaction-cost auxiliaries $t$, the canonical objective is:
+For asset weights `w` and support decisions `z`, the main model minimizes 
 
-$$ \min\; \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt $$
+$$ \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^T|w-w^0|, $$
+
+subject to, when enabled, 
+
+$$
+\begin{aligned}
+&\mathbf{1}^T w=1,\qquad w_i\ge0,\\
+&m_i z_i\le w_i\le u_i z_i,\\
+&\sum_i z_i=K,\\
+&L_g\le\sum_{i\in g}w_i\le U_g,\\
+&\mu^T w\ge R_{\min},\quad y^T w\ge Y_{\min},\\
+&\|w-w^0\|_1\le T_{\max},\\
+&f_{\min}\le B^T w\le f_{\max},\\
+&r_s^T w\ge s_s,\quad \text{CVaR}_\alpha(w)\le C_{\max}.
+\end{aligned}
+$$
+
 
 ## Benchmark Constraints
 
