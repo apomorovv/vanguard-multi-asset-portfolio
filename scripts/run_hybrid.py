@@ -40,6 +40,11 @@ def _problem(config: dict[str, Any]) -> PortfolioProblem:
             n_groups=int(config.get("n_groups", 8)),
             n_factors=int(config.get("n_factors", 6)),
             seed=int(config.get("seed", 0)),
+            current_cardinality=(
+                None
+                if config.get("current_cardinality") is None
+                else int(config["current_cardinality"])
+            ),
         )
     elif source in {"json", "file"}:
         problem = load_problem(ROOT / str(config["path"]))
