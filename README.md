@@ -135,13 +135,17 @@ Gurobi requires a valid license. IBM credentials are managed by
 
 ## Reproducible runs
 
-Run the tests first:
+Run the complete test suite first:
 
 ```bash
 python -m pytest -q
 ```
 
-Tiny certification example:
+### Tiny correctness and certification example
+
+The tiny configuration is intended for validating the mathematical model,
+cardinality handling, quantum candidate generation, and independent constraint
+checks on a tractable instance:
 
 ```bash
 python scripts/run_hybrid.py \
@@ -149,7 +153,12 @@ python scripts/run_hybrid.py \
   --overwrite
 ```
 
-Two-thousand-asset reference run:
+### Two-thousand-asset reference experiment
+
+The primary large demonstration uses a 2,000-asset factor-model universe,
+exactly 50 holdings, a 40% L1 turnover cap (20% under the one-way convention),
+three adaptive 16-asset change windows, classical tabu/LNS, optional XY-QAOA
+sampling, and optional Gurobi certification:
 
 ```bash
 python scripts/run_hybrid.py \
@@ -157,111 +166,262 @@ python scripts/run_hybrid.py \
   --overwrite
 ```
 
-The large configuration uses matrix-free factor risk, exactly 50 holdings, a
-40% L1 turnover cap (20% one-way turnover), three 16-asset change windows, and
-optional Gurobi certification.
+The global portfolio contains 2,000 candidate assets, but the quantum component
+operates only on the adaptive 16-asset change window. This is not a
+2,000-qubit optimization.
 
 ### Scaling study
 
-The default study runs seven sizes, three seeded repetitions per size, and
-writes runtime, quality, feasibility, memory, and quantum timing plots:
+The scaling runner accepts the following relevant options:
+
+```text
+--sizes
+--cardinality
+--window-size
+--backend
+--repetitions
+--quantum
+--aer-gpu
+--gurobi
+--seed
+--output
+```
+
+The script does not currently accept `--quantum-backend`, `--no-gurobi`, or
+`--overwrite`.
+
+A presentation-oriented GPU sweep is:
 
 ```bash
 python scripts/run_hybrid_scaling.py \
+  --sizes 250 500 1000 2000 5000 10000 \
+  --cardinality 50 \
+  --window-size 16 \
+  --backend osqp \
+  --repetitions 3 \
   --quantum \
   --aer-gpu \
+  --seed 20260802 \
   --output results/hybrid_scaling
 ```
 
-Default sizes are 250, 500, 1,000, 2,000, 5,000, 10,000, and 20,000 assets.
-Gurobi is attempted only through 2,000 assets; larger cases measure the
-scalable hybrid-search path and are not described as globally certified.
-Each case runs in a fresh process, and the output records peak resident memory,
-time to first valid portfolio, component runtimes, objective gaps, and all
-skipped components.
+This benchmark keeps the quantum window fixed at 16 variables while increasing
+the global asset universe. It is designed to measure whether the decomposition
+scales independently of quantum-window width.
 
-A quick portable check is:
+Run the 20,000-asset case separately as a stretch experiment rather than as
+three additional trials in the main sweep:
+
+```bash
+python scripts/run_hybrid_scaling.py \
+  --sizes 20000 \
+  --cardinality 50 \
+  --window-size 16 \
+  --backend osqp \
+  --repetitions 1 \
+  --quantum \
+  --aer-gpu \
+  --seed 20260802 \
+  --output results/hybrid_scaling_20000
+```
+
+The 20,000-asset case can require substantial system RAM. Its main risk is the
+global portfolio-data representation and associated temporary arrays, not the
+16-qubit Aer circuit.
+
+To include Gurobi comparisons, pass `--gurobi`. For presentation-quality
+certification, restrict this comparison to smaller and medium instances:
 
 ```bash
 python scripts/run_hybrid_scaling.py \
   --sizes 250 500 1000 2000 \
+  --cardinality 50 \
+  --window-size 16 \
+  --backend osqp \
+  --repetitions 3 \
+  --quantum \
+  --aer-gpu \
+  --gurobi \
+  --seed 20260802 \
+  --output results/hybrid_scaling_certified
+```
+
+Larger instances demonstrate the scalable hybrid-search path and must not be
+described as globally certified unless Gurobi returns a valid bound and a
+reported optimality gap.
+
+A quick portable smoke test, using the internal fixed-cardinality CPU subspace
+sampler, is:
+
+```bash
+python scripts/run_hybrid_scaling.py \
+  --sizes 250 500 1000 2000 \
+  --cardinality 50 \
+  --window-size 16 \
+  --backend osqp \
   --repetitions 1 \
-  --quantum-backend subspace \
-  --no-gurobi \
-  --output results/hybrid_scaling_quick \
-  --overwrite
+  --quantum \
+  --seed 20260802 \
+  --output results/hybrid_scaling_quick
+```
+
+Omitting `--aer-gpu` leaves the quantum experiment on the portable subspace
+backend. Omitting `--gurobi` disables Gurobi reference solves.
+
+The scaling script currently has no `--overwrite` option. Use a new output
+directory or move an existing one before rerunning:
+
+```bash
+mv results/hybrid_scaling \
+  "results/hybrid_scaling_$(date +%Y%m%d_%H%M%S)"
 ```
 
 ### IBM QPU demonstration
 
-Use a separate IBM Runtime environment and run one selected window at 8, 12,
-or 16 qubits. An explicit backend is required:
+Use a separate environment for IBM Runtime. The CUDA-12 Aer GPU environment
+uses a Qiskit version that may not be compatible with the current IBM Runtime
+stack.
+
+The current `run_hybrid.py` command does not accept quantum backend, IBM
+backend, window size, iteration count, or shot count as command-line
+overrides. Configure those values in a YAML file instead.
+
+Create a QPU configuration from the main demonstration configuration:
+
+```bash
+cp configs/final_hybrid.yaml configs/qpu_12.yaml
+```
+
+Edit the `hybrid` section of `configs/qpu_12.yaml`:
+
+```yaml
+hybrid:
+  iterations: 1
+  window_size: 12
+  held_fraction: 0.42
+
+  allocation_backend: scipy
+  allocation_options:
+    tol: 1.0e-8
+    max_iter: 3000
+
+  run_quantum: true
+  run_penalty_qaoa: false
+  run_gurobi_reference: false
+  use_topology: true
+  maximum_quantum_edges: 30
+
+  quantum:
+    depth: 1
+    shots: 4096
+    optimizer_maxiter: 60
+    optimizer_starts: 3
+    seed: 20260802
+    initial_state: warm
+    mixer: ring
+    backend: ibm_runtime
+    ibm_backend: REPLACE_WITH_ACCESSIBLE_BACKEND
+    maximum_subspace_states: 400000
+    top_candidates: 128
+    transpile_optimization_level: 3
+```
+
+Then run:
 
 ```bash
 python scripts/run_hybrid.py \
-  --config configs/large_hybrid.yaml \
-  --quantum-backend ibm_runtime \
-  --ibm-backend <backend-name> \
-  --window-size 12 \
-  --iterations 1 \
-  --quantum-shots 4096 \
-  --no-gurobi \
+  --config configs/qpu_12.yaml \
   --output results/qpu_12 \
   --overwrite
 ```
 
-The hardware run is a component demonstration, not a replacement for the
-20,000-asset classical factor solve. The asset-universe size and QPU width are
-decoupled: the QPU sees only the adaptive change window.
+Begin with an 8-, 10-, or 12-qubit window before attempting the full 16-qubit
+circuit. Real-device routing can substantially increase circuit depth and
+two-qubit gate count.
+
+The IBM QPU experiment is a hardware-validation demonstration, not a
+replacement for the large classical factor-model solve. The global
+asset-universe size and QPU width are decoupled: the QPU receives only the
+adaptive change-window circuit.
+
+QPU wall time includes queueing, transpilation, submission, and result
+retrieval. It must not be presented as directly comparable to local CPU or GPU
+kernel time.
 
 ## Evidence package
 
-Every hybrid run writes:
+A configured hybrid run writes an auditable evidence package containing:
 
-- `hybrid_summary.csv` for objective, runtime, feasibility, and solver status;
-- `allocation_weights.csv` for weights and trades;
-- `constraint_checks.csv` for all independently recomputed guardrails;
-- `change_windows.csv` for the searched asset neighborhoods;
-- `quantum_execution.csv` for requested and actual devices, circuit resources,
-  cardinality rate, and phase timing;
-- `objective_timeline.csv` and `backtest_summary.csv`;
-- `hybrid_diagnostics.json`, `problem.json`, and a SHA-256 artifact manifest;
-- matched PNG/PDF figures, including a six-guardrail presentation view and the
-  full constraint-slack appendix.
+- `hybrid_summary.csv` — objective, runtime, feasibility, metrics, and solver
+  status for every method;
+- `allocation_weights.csv` — current and recommended weights and trades;
+- `constraint_checks.csv` — independently recomputed hard-constraint checks;
+- `change_windows.csv` — held, removable, and candidate assets in each adaptive
+  neighborhood;
+- `quantum_execution.csv` — requested and actual backend, execution device,
+  circuit resources, cardinality-valid shot rate, and phase timings;
+- `objective_timeline.csv` — best feasible incumbent versus elapsed time;
+- `backtest_summary.csv` — synthetic out-of-sample metrics when backtesting is
+  enabled;
+- `hybrid_diagnostics.json` — complete solver, window, quantum, and validation
+  diagnostics;
+- `problem.json` — the generated or loaded portfolio instance;
+- a SHA-256 artifact manifest;
+- matched PNG and PDF figures for allocation, objective quality, runtime,
+  validation, exposures, quantum resources, and backtesting.
 
-The scaling study writes raw run rows, method rows, per-size summaries, the
-resolved study configuration, CPU/GPU and package metadata, SHA-256 checksums,
-and four matched PNG/PDF figure pairs. A presentation claim should be traceable
-to these tables rather than inferred from a plot.
+The scaling study writes raw trial rows, method-level rows, aggregated
+per-size summaries, resolved benchmark settings, hardware and package
+metadata, and presentation plots. Claims in the presentation should be
+traceable to the generated CSV or JSON records rather than inferred only from
+a figure.
+
+For large scaling cases, avoid serializing unnecessary dense problem matrices
+or generating dense synthetic backtests unless those artifacts are explicitly
+required.
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
-| `src/vanguard_portfolio/schemas.py` | Problem, constraints, results, and factor-native matrix operations |
-| `src/vanguard_portfolio/portfolio_model.py` | Objective, risk, QP construction, CVaR |
-| `src/vanguard_portfolio/allocation.py` | Relaxation, initialization, allocation oracle |
-| `src/vanguard_portfolio/window_search.py` | Change windows, enumeration, tabu/LNS |
-| `src/vanguard_portfolio/quantum_solver.py` | XY-QAOA, Aer, IBM Runtime, device evidence |
-| `src/vanguard_portfolio/classical_discrete.py` | Direct Gurobi MIQP and classical references |
-| `src/vanguard_portfolio/validation.py` | Independent hard-constraint checks |
-| `src/vanguard_portfolio/presentation.py` | Tables, reports, figures, checksums |
-| `scripts/run_hybrid.py` | One configured hybrid experiment |
-| `scripts/run_hybrid_scaling.py` | Multi-size, repeated scaling experiment |
-| `docs/portfolio_optimization_report.md` | Research-style problem and method report |
+| `src/vanguard_portfolio/schemas.py` | Portfolio data structures, constraints, solver results, and factor-model data |
+| `src/vanguard_portfolio/portfolio_model.py` | Return, risk, income, cost, QP, and CVaR model construction |
+| `src/vanguard_portfolio/allocation.py` | Continuous relaxation, feasible initialization, and fixed-support allocation oracle |
+| `src/vanguard_portfolio/window_search.py` | Adaptive change windows, exact enumeration, and tabu/LNS |
+| `src/vanguard_portfolio/quantum_solver.py` | XY-QAOA, fixed-weight simulation, Aer execution, IBM Runtime, and device diagnostics |
+| `src/vanguard_portfolio/classical_discrete.py` | Direct Gurobi MIQP and classical discrete references |
+| `src/vanguard_portfolio/validation.py` | Independent hard-constraint validation |
+| `src/vanguard_portfolio/presentation.py` | Reports, tables, figures, and artifact checksums |
+| `src/vanguard_portfolio/copilot_app.py` | Interactive Streamlit portfolio Copilot |
+| `scripts/run_hybrid.py` | One YAML-configured hybrid experiment |
+| `scripts/run_hybrid_scaling.py` | Repeated multi-size scaling benchmark |
+| `docs/portfolio_optimization_report.md` | Research-style mathematical and implementation report |
 
 ## Interpretation limits
 
-- The model is single-period, long-only, and based on estimated inputs.
+- The model is single-period, long-only, and depends on estimated or synthetic
+  inputs.
 - Synthetic backtests illustrate behavior; they are not forecasts or financial
   advice.
+- The global asset count is not the number of qubits. The quantum component
+  receives only the adaptive change window.
 - Fixed-support QP optimality does not make LNS or QAOA globally optimal.
-- A time-limited Gurobi result is reported with its bound and gap, not as an
-  unconditional proof.
-- Cardinality-preserving quantum samples establish circuit correctness, not
+- A time-limited Gurobi result must be reported together with its incumbent,
+  bound, status, and MIP gap.
+- A continuous-relaxation bound is not the same as a certified mixed-integer
+  optimality gap.
+- Cardinality-preserving XY-QAOA samples establish circuit correctness, not
   quantum advantage.
-- QPU queue time and all classical preprocessing must be included in an
-  end-to-end hardware comparison.
+- Aer GPU is used for final circuit sampling; parameter optimization currently
+  remains on the classical fixed-weight subspace simulator.
+- Real-QPU noise may produce samples with the wrong measured Hamming weight.
+  Postselection and the exact allocation oracle must therefore remain enabled.
+- QPU queue time, transpilation, classical preprocessing, and allocation-oracle
+  time must be included in any end-to-end hardware comparison.
+- Results from one synthetic seed or one backtest path are illustrative.
+  Robust claims require repeated universes, sampling seeds, and out-of-sample
+  paths.
+
 
 The study methodology, two-thousand-asset reference result, scaling protocol,
 and limitations are documented in
