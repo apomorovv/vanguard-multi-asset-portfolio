@@ -22,18 +22,19 @@ qp = ["osqp>=0.6.3", "cvxpy>=1.4", "clarabel>=0.9"]
 mip = ["cvxpy>=1.4", "pyscipopt>=5.0"]
 gurobi = ["gurobipy>=11.0"]
 
-# ``qiskit-aer`` is CPU-only. Qiskit publishes separate Linux x86_64
-# distributions for CUDA 12+ and CUDA 11. Static extras cannot detect hardware,
-# so scripts/install_environment.py selects among these extras automatically.
-quantum = ["qiskit>=2.0", "qiskit-aer>=0.17"]
-quantum-cpu = ["qiskit>=2.0", "qiskit-aer>=0.17"]
+# Qiskit publishes separate Aer distributions. The CUDA 12 wheel currently
+# remains at Aer 0.15.1, whose Python layer relies on APIs retained by Qiskit
+# 1.4 but removed in Qiskit 2.0. Keep that pair pinned together. CUDA 11 and
+# CPU Aer have current 0.17.2 wheels and can use Qiskit 2.x.
+quantum = ["qiskit>=2.0,<3", "qiskit-aer==0.17.2"]
+quantum-cpu = ["qiskit>=2.0,<3", "qiskit-aer==0.17.2"]
 quantum-gpu = [
-  "qiskit>=2.0",
-  "qiskit-aer-gpu>=0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit==1.4.6",
+  "qiskit-aer-gpu==0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 quantum-gpu-cu11 = [
-  "qiskit>=2.0",
-  "qiskit-aer-gpu-cu11>=0.17; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit>=2.0,<3",
+  "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 
 ibm-runtime = ["qiskit-ibm-runtime>=0.40"]
@@ -55,44 +56,47 @@ dev = [
   "ruff>=0.6",
 ]
 
-# Backward-compatible portable full install. It intentionally remains CPU-only;
-# use scripts/install_environment.py for automatic CPU/GPU selection.
+# Portable full install: current Qiskit and CPU Aer.
 full = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit>=2.0",
-  "qiskit-aer>=0.17",
+  "qiskit>=2.0,<3",
+  "qiskit-aer==0.17.2",
   "qiskit-ibm-runtime>=0.40",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
   "pytest-cov>=5.0",
 ]
+
+# CUDA 12 package. This is also the correct choice when nvidia-smi reports
+# CUDA 13, because the driver can run CUDA 12 user-space binaries.
 full-gpu = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit>=2.0",
-  "qiskit-aer-gpu>=0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
-  "qiskit-ibm-runtime>=0.40",
+  "qiskit==1.4.6",
+  "qiskit-aer-gpu==0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-ibm-runtime==0.40.1",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
   "pytest-cov>=5.0",
 ]
+
 full-gpu-cu11 = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit>=2.0",
-  "qiskit-aer-gpu-cu11>=0.17; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit>=2.0,<3",
+  "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
   "qiskit-ibm-runtime>=0.40",
   "streamlit>=1.40",
   "plotly>=5.24",
