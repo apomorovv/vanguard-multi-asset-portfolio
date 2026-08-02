@@ -29,10 +29,6 @@ flowchart TD
 The quantum circuit samples asset supports; every support returns to the same 
 continuous allocation model and validator used by the classical search.
 
-## Optimization model
-
-# Portfolio Optimization and XY-QAOA Formulation
-
 ## Canonical Objective Function
 
 For weights $w$, support variables $z$, current weights $w^0$, and transaction-cost auxiliaries $t$, the canonical objective is:
