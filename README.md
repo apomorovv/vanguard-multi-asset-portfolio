@@ -380,6 +380,32 @@ For large scaling cases, avoid serializing unnecessary dense problem matrices
 or generating dense synthetic backtests unless those artifacts are explicitly
 required.
 
+### Copilot
+
+```bash
+streamlit run src/vanguard_portfolio/copilot_app.py
+```
+
+The advanced panel exposes return, turnover, income, factor-band, stress-loss,
+and empirical-CVaR guardrails. Every change is solved and independently
+validated; infeasible combinations are reported instead of silently relaxed.
+
+## Hardware strategy
+
+| Work | Preferred hardware/software |
+|---|---|
+| Full-universe relaxation | CPU + OSQP factor QP |
+| Allocation oracle and classical LNS | CPU; support-reduced, cached evaluations |
+| Exact MIQP and optimality bound | Multicore CPU + Gurobi |
+| Ideal/noisy circuit development | GPU + Qiskit Aer GPU |
+| Final 8-16 qubit demonstration | IBM QPU through Runtime |
+| Copilot and plots | CPU |
+
+`quantum.backend: subspace` is the portable deterministic reference.
+`aer_gpu` uses the Qiskit circuit and the GPU. `ibm_runtime` requires an
+explicit backend name and is reserved for selected final windows. Backend
+calibration should be checked on the run date; no processor is hardcoded.
+
 ## Repository map
 
 | Path | Purpose |
