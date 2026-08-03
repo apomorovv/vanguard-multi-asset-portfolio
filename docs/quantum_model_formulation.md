@@ -279,7 +279,6 @@ $$
 \mathcal{H}_{r} = \mathrm{span} \left\{ |x\rangle : \sum_{i} x_{i} = r \right\}
 $$
 
-
 ## 10. Mixer Topologies
 
 ### 10.1 Ring Mixer
