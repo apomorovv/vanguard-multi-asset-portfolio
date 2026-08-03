@@ -271,13 +271,7 @@ reserved for the most promising supports.
 The QUBO is converted to an Ising Hamiltonian
 
 $$
-H_C
-=
-c_0I
-+
-\sum_i h_iZ_i
-+
-\sum_{i<j}J_{ij}Z_iZ_j.
+H_C = c_0I + \sum_i h_iZ_i + \sum_{i<j}J_{ij}Z_iZ_j
 $$
 
 ### 9.2 XY Mixer
@@ -285,46 +279,31 @@ $$
 The mixer is
 
 $$
-H_M
-=
-\frac{1}{2}
-\sum_{(i,j)\in E}
-(X_iX_j+Y_iY_j).
+H_M = \frac{1}{2} \sum_{(i,j)\in E} (X_iX_j+Y_iY_j)
 $$
 
-Each interaction exchanges basis states `10` and `01`. It does not create or
-destroy an excitation. Therefore, it preserves Hamming weight in the ideal
-circuit.
+Each interaction exchanges basis states `10` and `01`. It does not create or destroy an excitation. Therefore, it preserves Hamming weight in the ideal circuit. 
 
 The graph $E$ is either:
-
 - a ring, which gives a shallow default circuit;
 - a complete graph, used as an ablation at higher gate cost.
 
 ### 9.3 Initial State
 
-The default warm start is the current window bitstring. It already contains
-exactly $r$ selected assets.
+The default warm start is the current window bitstring. It already contains exactly $r$ selected assets. 
 
-A Dicke-state initialization is available as an ablation. It starts from a
-uniform superposition over all fixed-weight states but requires more expensive
-state preparation.
+A Dicke-state initialization is available as an ablation. It starts from a uniform superposition over all fixed-weight states but requires more expensive state preparation.
 
 ### 9.4 Variational State
 
 For depth $p$,
 
 $$
-|\psi(\gamma,\beta)\rangle
-=
-\prod_{\ell=1}^p
-e^{-i\beta_\ell H_M}
-e^{-i\gamma_\ell H_C}
-|\psi_0\rangle.
+
+|\psi(\gamma,\beta)\rangle = \prod_{\ell=1}^p e^{-i\beta_\ell H_M} e^{-i\gamma_\ell H_C} |\psi_0\rangle
 $$
 
-Cost coefficients are normalized before angle optimization. Multiple seeded
-COBYLA starts reduce sensitivity to one initial angle vector.
+Cost coefficients are normalized before angle optimization. Multiple seeded COBYLA starts reduce sensitivity to one initial angle vector.
 
 ### 9.5 Exact Fixed-Weight Subspace Simulator
 
@@ -334,16 +313,13 @@ $$
 \binom{F}{r}
 $$
 
-basis states rather than all $2^F$ computational states.
-
-For the default 16-qubit, 7-excitation window,
+basis states rather than all $2^F$ computational states. For the default 16-qubit, 7-excitation window,
 
 $$
-\binom{16}{7}=11{,}440.
+\binom{16}{7}=11{,}440
 $$
 
-This compact CPU simulator optimizes the angles and serves as the deterministic
-algorithmic reference.
+This compact CPU simulator optimizes the angles and serves as the deterministic algorithmic reference.
 
 ### 9.6 Aer and IBM Sampling
 
