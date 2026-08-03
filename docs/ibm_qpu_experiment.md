@@ -253,10 +253,3 @@ Appropriate claims include:
 - the best QPU-guided support improved or did not improve the warm start;
 - hardware depth and error reduced candidate quality relative to ideal
   simulation.
-
-Do not claim:
-
-- a full 2,000-asset quantum optimization;
-- global optimality from QPU sampling;
-- quantum speedup from QPU usage time alone;
-- quantum advantage without an equal-budget classical comparison.
