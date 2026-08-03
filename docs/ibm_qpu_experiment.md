@@ -1,90 +1,131 @@
-# IBM QPU experiment protocol
+# IBM QPU Experiment Protocol
 
-The IBM experiment is a hardware demonstration of one adaptive XY-QAOA change
-window. It is not a full-universe QPU solve: the factor QP, window construction,
-angle optimization, allocation oracle, and validation remain classical.
+## 1. Scope
 
-## Experimental question
+The IBM experiment demonstrates one or more adaptive XY-QAOA change windows on
+real hardware.
 
-For a fixed window and transferred QAOA angles, can current IBM hardware
-sample useful supports while approximately preserving the required window
-cardinality?
+It is not a full-universe QPU portfolio solve. The following stages remain
+classical:
 
-The primary outputs are therefore:
+- factor-risk data representation;
+- full-universe convex relaxation;
+- valid exact-cardinality initialization;
+- change-window construction;
+- QAOA angle optimization;
+- fixed-support continuous allocation;
+- independent validation;
+- optional Gurobi certification.
 
-- raw and postselected cardinality-feasibility rate;
-- number of unique sampled supports;
-- best valid objective after exact reallocation;
+The QPU samples candidate support bitstrings for a small window.
+
+## 2. Experimental Question
+
+For a fixed support window and transferred QAOA angles:
+
+> Can current IBM hardware sample useful candidate supports while maintaining a
+> meaningful fixed-cardinality rate and producing competitive validated
+> portfolios after exact reallocation?
+
+This question is narrower and more defensible than claiming that the QPU
+optimizes the entire asset universe.
+
+## 3. Primary Outputs
+
+Report:
+
+- requested and actual backend;
+- Runtime job identifier;
+- experiment date and calibration timestamp when available;
+- window size $F$;
+- required Hamming weight $r$;
+- QAOA depth $p$;
+- shots;
+- raw cardinality-feasibility rate;
+- postselected cardinality-feasibility rate, if used;
+- number of unique raw bitstrings;
+- number of unique fixed-weight supports;
+- number of supports sent to the allocation oracle;
+- number of financially feasible supports;
+- best validated portfolio objective;
 - improvement relative to the warm-start support;
-- transpiled depth and two-qubit-operation count;
-- shots, QPU usage time, queue-inclusive wall time, and complete end-to-end
-  time.
+- transpiled width;
+- transpiled circuit depth;
+- two-qubit operation count;
+- transpilation seed and optimization level;
+- QPU usage time when reported;
+- queue-inclusive Runtime wall time;
+- complete end-to-end time.
 
-The experiment does not establish quantum advantage unless it is compared with
-classical LNS under an equal total time budget, including queueing and all
-classical work.
+A high cardinality rate is a circuit-correctness result. It is not by itself a
+portfolio-quality or speed result.
 
-## Environment
+## 4. Environment
 
-Use a separate environment from CUDA 12 Aer:
+Use a separate environment from the CUDA 12 Aer GPU stack:
 
 ```bash
 python -m venv .venv-ibm-runtime
 source .venv-ibm-runtime/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[qp,ibm-runtime,test]"
+python -m pip check
 ```
 
-Save IBM credentials through the supported `qiskit-ibm-runtime` account
-configuration. Do not place tokens in YAML, shell scripts, notebooks, logs, or
-Git history.
+Configure credentials with the supported `qiskit-ibm-runtime` account
+mechanism. Never place an API token in repository files.
 
-`SamplerV2` is used because it returns measured bitstrings. The implementation
-submits one Runtime job per selected window and records the Runtime job ID and
-available usage metrics. IBM documents the sampler interface and execution
-modes in the following primary sources:
+## 5. Backend Selection
 
-- [SamplerV2 API](https://quantum.cloud.ibm.com/docs/api/qiskit-ibm-runtime/sampler-v2)
-- [Batch execution](https://quantum.cloud.ibm.com/docs/guides/run-jobs-batch)
-- [Session execution](https://quantum.cloud.ibm.com/docs/guides/run-jobs-session)
-- [IBM QAOA tutorial](https://quantum.cloud.ibm.com/docs/en/tutorials/quantum-approximate-optimization-algorithm)
+Do not hardcode one processor in the committed default configuration. Hardware
+availability and calibration change.
 
-Job mode is the most portable default. Batch mode is appropriate when the
-8-, 12-, and 16-qubit circuits are independent and ready together. Session mode
-is useful for iterative hardware refinement only when the account plan and
-workload support it.
+On the experiment date, choose an operational backend with:
 
-## Backend selection
+1. enough qubits for the transpiled circuit;
+2. a connected subgraph compatible with the mixer;
+3. low two-qubit error on the selected edges;
+4. acceptable readout error;
+5. acceptable queue length;
+6. no maintenance or calibration warning.
 
-Do not hardcode a processor in committed configuration. On the experiment
-date, select a backend that has:
+Record the selected backend rather than describing it as permanently best.
 
-1. enough operational qubits for the transpiled window;
-2. low two-qubit error on a connected subgraph;
-3. acceptable readout error;
-4. an acceptable queue;
-5. no maintenance or calibration warning.
+## 6. Reference Sequence
 
-Record the backend name, calibration timestamp, target version, and chosen
-transpilation seed with the result. A backend that is best today need not be
-best on a later run.
+For each selected window, run:
 
-## Recommended sequence
+1. exact fixed-weight subspace simulator;
+2. Aer CPU or GPU physical-circuit sampling;
+3. IBM QPU sampling.
 
-Run the same window first with the exact subspace sampler and Aer, then use the
-QPU:
+Use the same:
 
-1. 8 qubits, depth \(p=1\), 4,096 shots;
-2. 12 qubits, depth \(p=1\), 4,096-8,192 shots;
-3. 16 qubits, depth \(p=1\), 8,192 shots if transpiled resources remain
-   reasonable;
-4. depth \(p=2\) only after the \(p=1\) comparison is stable.
+- QUBO;
+- initial bitstring;
+- optimized angles;
+- mixer;
+- depth;
+- shots where practical;
+- candidate-ranking rule;
+- allocation oracle;
+- validation tolerance.
 
-Twenty qubits is an optional extension, not a submission requirement. Proceed
-only when the transpiled two-qubit depth and calibration data justify the
-additional width.
+This separates algorithmic behavior from physical execution noise.
 
-Example command:
+## 7. Recommended Hardware Progression
+
+Start conservatively:
+
+1. 8 qubits, $p=1$, 4,096 shots;
+2. 12 qubits, $p=1$, 4,096 to 8,192 shots;
+3. 16 qubits, $p=1$, 8,192 shots if transpiled resources remain reasonable;
+4. $p=2$ only after the $p=1$ baseline is stable.
+
+A 20-qubit case is an extension, not a requirement. Proceed only when
+transpiled two-qubit depth and calibration quality justify it.
+
+## 8. Example Command
 
 ```bash
 python scripts/run_hybrid.py \
@@ -99,25 +140,129 @@ python scripts/run_hybrid.py \
   --overwrite
 ```
 
-The classical angle optimizer runs in the exact fixed-weight subspace. This is
-intentional: at the default 16-qubit, seven-excitation window it operates on
-only \(\binom{16}{7}=11{,}440\) states. The QPU samples the transferred physical
-circuit; it is not used for dozens of sequential COBYLA evaluations.
+`--ibm-backend` is required when the selected quantum backend is
+`ibm_runtime`.
 
-## Acceptance and reporting
+## 9. Why Angles Are Optimized Classically
 
-Before using a QPU result in the presentation, confirm:
+The current implementation optimizes angles in the exact fixed-weight CPU
+subspace, then transfers those angles to the physical circuit.
 
-- the actual backend is `ibm_runtime` and a job ID is present;
+For a 16-qubit, 7-excitation window, the optimizer works with
+
+$$
+\binom{16}{7}=11{,}440
+$$
+
+states.
+
+Using the QPU for dozens of sequential COBYLA evaluations would add queue and
+latency costs and would make the experiment difficult to reproduce. Angle
+transfer isolates the hardware-sampling question.
+
+## 10. Cardinality on Hardware
+
+In the ideal model, the XY mixer preserves Hamming weight.
+
+On hardware, invalid-cardinality samples may appear because of:
+
+- state-preparation error;
+- gate error;
+- routing and added operations;
+- decoherence;
+- readout error.
+
+Report the raw rate:
+
+$$
+\text{raw fixed-weight rate}
+=
+\frac{\text{shots with Hamming weight }r}
+{\text{total shots}}.
+$$
+
+If postselection is used, also report how many shots and unique supports remain.
+Do not report only the postselected rate.
+
+## 11. Allocation and Financial Validation
+
+For every selected fixed-weight support:
+
+1. combine it with the frozen holdings;
+2. solve the fixed-support continuous allocation;
+3. reconstruct the full-universe weight vector;
+4. validate budget, bounds, groups, turnover, exact cardinality, active-weight
+   rules, eligibility, mandatory holdings, and every enabled optional guardrail;
+5. reject any support with a breach above tolerance.
+
+The best measured bitstring is not automatically the best validated portfolio.
+The QUBO is a surrogate and the exact allocation changes the weights.
+
+## 12. Fair Classical Comparison
+
+A quantum-advantage claim requires more than observing an improving QPU sample.
+
+Compare against classical LNS using:
+
+- the same window;
+- the same starting support;
+- the same QUBO;
+- the same allocation oracle;
+- the same validation rule;
+- an equal end-to-end time budget.
+
+The end-to-end QPU time includes:
+
+- classical preprocessing;
+- angle optimization;
+- circuit construction;
+- transpilation;
+- queue time;
+- QPU execution;
+- result retrieval;
+- decoding;
+- allocation;
+- validation.
+
+Report QPU usage time separately, but do not substitute it for total wall time.
+
+## 13. Acceptance Checklist
+
+Before presenting a hardware result, confirm:
+
+- `actual_backend` is IBM Runtime;
+- a Runtime job ID is present;
 - no fallback reason is recorded;
-- the transpiled circuit width matches the intended window;
-- raw counts sum to the requested shots;
-- every presented support was reallocated and independently validated;
-- invalid-cardinality samples are reported, not silently treated as valid;
-- QPU usage time and complete wall time are both disclosed;
-- the classical comparison uses the same window, objective, shots/candidate
-  budget, and end-to-end timing convention.
+- the intended window size is reflected in the transpiled circuit;
+- counts sum to the requested shots;
+- raw invalid-cardinality samples are disclosed;
+- every reported support was reallocated and validated;
+- complete wall time and QPU usage time are both shown;
+- the classical comparison uses the same window and timing convention;
+- the archived result package contains all raw tables and diagnostics.
 
-Read `quantum_execution.csv`, `hybrid_diagnostics.json`, and
-`constraint_checks.csv` together. A high cardinality rate is a circuit
-correctness result; it is not a portfolio-quality or speed result by itself.
+Read together:
+
+- `quantum_execution.csv`;
+- `hybrid_diagnostics.json`;
+- `change_windows.csv`;
+- `constraint_checks.csv`;
+- `hybrid_summary.csv`.
+
+## 14. Claims the Experiment Can Support
+
+Appropriate claims include:
+
+- the circuit executed on a named IBM backend;
+- ideal and hardware cardinality rates were measured;
+- the QPU generated one or more financially feasible supports after allocation;
+- the best QPU-guided support improved or did not improve the warm start;
+- hardware depth and error reduced candidate quality relative to ideal
+  simulation.
+
+Do not claim:
+
+- a full 2,000-asset quantum optimization;
+- global optimality from QPU sampling;
+- quantum speedup from QPU usage time alone;
+- quantum advantage without an equal-budget classical comparison.
