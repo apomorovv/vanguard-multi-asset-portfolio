@@ -231,7 +231,7 @@ $$
 The cost Hamiltonian has the form
 
 $$
-H_{C} = c_{0}I + \sum_{i=1}^{F}h_{i}^{(Z)}Z_{i} + \sum_{i<j}J_{ij}Z_{i}Z_{j}
+H_{C} = c_{0}I + \sum_{i=1}^{F}h_{i}^{(Z)}Z_{i} + \sum_{i \lt j} J_{ij}Z_{i}Z_{j}
 $$
 
 
