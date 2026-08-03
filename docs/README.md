@@ -28,6 +28,7 @@ constraint.
 |---|---|
 | [`mathematical_model.md`](mathematical_model.md) | Defines all data, variables, objective terms, and hard constraints. |
 | [`final_hybrid_model.md`](final_hybrid_model.md) | Explains the complete hybrid algorithm from input validation to final output. |
+| [`quantum_model_formulation.md`](quantum_model_formulation.md) | Defines the final fixed-cardinality XY-QAOA window model, circuit, decoding, and classical handoff. |
 | [`classical_model_formulation.md`](classical_model_formulation.md) | Explains the continuous, equal-lot, local-search, and Gurobi classical baselines. |
 | [`validation_protocol.md`](validation_protocol.md) | Defines the checks required before a result can be accepted or reported. |
 | [`gpu_installation.md`](gpu_installation.md) | Describes reproducible Qiskit Aer CPU/GPU environments. |
