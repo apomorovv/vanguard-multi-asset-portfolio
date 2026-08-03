@@ -276,8 +276,9 @@ is the Hamming-weight operator.
 Starting from a state with $r$ ones keeps ideal evolution inside
 
 $$
-\mathcal H_r = \operatorname{span} \left\{ |x\rangle:\sum_i x_i=r\right\}.
+\mathcal{H}_{r} = \mathrm{span} \left\{ |x\rangle : \sum_{i} x_{i} = r \right\}
 $$
+
 
 ## 10. Mixer Topologies
 
@@ -296,7 +297,7 @@ It requires $O(F)$ mixer edges and is the practical default.
 The complete mixer uses every pair:
 
 $$
-E=\{(i,j):0\le i<j<F\}.
+E = \{ (i,j) : 0 \le i \lt j \lt F \}
 $$
 
 It improves direct exchange connectivity but requires $O(F^2)$ interactions and
