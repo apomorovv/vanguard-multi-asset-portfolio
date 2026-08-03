@@ -198,7 +198,6 @@ where $\Sigma_{WW}$ is the covariance block for window assets.
 ### 7.2 Linear Term
 
 The linear coefficients include:
-
 - covariance with frozen holdings;
 - expected return;
 - income;
@@ -208,17 +207,7 @@ The linear coefficients include:
 In compact form,
 
 $$
-h
-=
-2\lambda_{\mathrm{risk}}a(\Sigma w_F)_W
--
-\lambda_{\mathrm{return}}a\mu_W
--
-\lambda_{\mathrm{income}}ay_W
-+
-h_{\mathrm{cost}}
-+
-h_{\mathrm{group}}.
+h = 2\lambda_{\mathrm{risk}}a(\Sigma w_F)_W - \lambda_{\mathrm{return}}a\mu_W - \lambda_{\mathrm{income}}ay_W + h_{\mathrm{cost}} + h_{\mathrm{group}}
 $$
 
 For the equal proxy notional, the transaction-cost change is binary-linear and
