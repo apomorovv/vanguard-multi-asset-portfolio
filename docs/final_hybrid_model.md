@@ -299,7 +299,6 @@ A Dicke-state initialization is available as an ablation. It starts from a unifo
 For depth $p$,
 
 $$
-
 |\psi(\gamma,\beta)\rangle = \prod_{\ell=1}^p e^{-i\beta_\ell H_M} e^{-i\gamma_\ell H_C} |\psi_0\rangle
 $$
 
