@@ -165,26 +165,15 @@ is traded; transaction cost weights each trade by its asset-specific cost.
 Every accepted portfolio is evaluated with the same minimization objective:
 
 $$
-F(w)
-=
-\lambda_{\mathrm{risk}}\,w^\top\Sigma w
--
-\lambda_{\mathrm{return}}\,\mu^\top w
--
-\lambda_{\mathrm{income}}\,y^\top w
-+
-\lambda_{\mathrm{cost}}\,c^\top t.
+F(w) = \lambda_{\mathrm{risk}}\,w^\top\Sigma w - \lambda_{\mathrm{return}}\,\mu^\top w - \lambda_{\mathrm{income}}\,y^\top w + \lambda_{\mathrm{cost}}\,c^\top t
 $$
 
 The preference coefficients are nonnegative:
 
 $$
-\lambda_{\mathrm{risk}},
-\lambda_{\mathrm{return}},
-\lambda_{\mathrm{income}},
-\lambda_{\mathrm{cost}}
-\ge 0.
+\lambda_{\mathrm{risk}}, \lambda_{\mathrm{return}}, \lambda_{\mathrm{income}}, \lambda_{\mathrm{cost}} \ge 0
 $$
+
 
 Interpretation:
 
