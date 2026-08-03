@@ -206,7 +206,7 @@ The validator independently evaluates empirical CVaR at level $\alpha$ and
 requires
 
 $$
-\operatorname{CVaR}_\alpha(w)\le C_{\max}.
+\mathrm{CVaR}_{\alpha}(w) \le C_{\max}
 $$
 
 It does not reuse the optimizer's $\eta$ and $u_s$ values.
