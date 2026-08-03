@@ -207,6 +207,7 @@ requires
 
 $$
 \mathrm{C}\mathrm{V}\mathrm{a}\mathrm{R}_{\alpha}(w) \le C_{\max}
+$$
 
 It does not reuse the optimizer's $\eta$ and $u_s$ values.
 
