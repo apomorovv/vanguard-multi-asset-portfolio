@@ -72,6 +72,24 @@ python -m pip check
 Configure credentials with the supported `qiskit-ibm-runtime` account
 mechanism. Never place an API token in repository files.
 
+To configure the ibm_runtime account setup, before running any ibm_runtime backend commands, register credentials once — outside the repo, never in a config file:
+```bash
+from qiskit_ibm_runtime import QiskitRuntimeService
+
+QiskitRuntimeService.save_account(
+    channel="ibm_quantum_platform",   # or "ibm_cloud", depending on your account type
+    token="<your IBM token>",
+    overwrite=True,
+)
+```
+
+Run this once inside the .venv-ibm-runtime environment (§4). It writes to ~/.qiskit/qiskit-ibm-runtime.json on your machine — not into the repository. Get the token from your IBM Quantum account page before calling save_account.
+After this one-time setup, every subsequent run (including run_hybrid.py --quantum-backend ibm_runtime) picks up the saved account automatically via:
+```bash
+service = QiskitRuntimeService()
+```
+No token needs to be passed on the command line or stored in any YAML config.
+
 ## 5. Backend Selection
 
 Do not hardcode one processor in the committed default configuration. Hardware
