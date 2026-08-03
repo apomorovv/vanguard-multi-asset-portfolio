@@ -286,8 +286,6 @@ When available, record separately:
 - validation time;
 - native solver runtime.
 
-Do not replace end-to-end time with a favorable internal solver timer.
-
 ## 14. Required Cross-Checks
 
 On tractable instances:
