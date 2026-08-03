@@ -172,10 +172,7 @@ On hardware, invalid-cardinality samples may appear because of:
 Report the raw rate:
 
 $$
-\text{raw fixed-weight rate}
-=
-\frac{\text{shots with Hamming weight }r}
-{\text{total shots}}.
+\text{raw fixed-weight rate}=\frac{\text{shots with Hamming weight }r}{\text{total shots}}.
 $$
 
 If postselection is used, also report how many shots and unique supports remain.
