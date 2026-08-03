@@ -325,6 +325,7 @@ $$
 
 It is an ablation that gives equal initial amplitude to all fixed-weight states but requires more expensive preparation.
 
+
 ## 12. QAOA State and Objective
 
 For depth $p$,
