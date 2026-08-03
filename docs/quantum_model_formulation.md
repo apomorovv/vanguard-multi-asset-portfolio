@@ -276,7 +276,7 @@ is the Hamming-weight operator.
 Starting from a state with $r$ ones keeps ideal evolution inside
 
 $$
-\mathcal{H}_{r} = \mathrm{span} \bigl\{ |x\rangle : \sum_{i} x_{i} = r \bigr\}
+\mathcal{H}_{r} = \mathrm{span} \left[ |x\rangle : \sum_{i} x_{i} = r \right]
 $$
 
 ## 10. Mixer Topologies
