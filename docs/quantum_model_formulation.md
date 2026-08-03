@@ -286,7 +286,7 @@ $$
 The ring uses
 
 $$
-(0,1),(1,2),\ldots,(F-2,F-1),(F-1,0).
+(0,1), (1,2), \ldots, (F-2, F-1), (F-1, 0)
 $$
 
 It requires $O(F)$ mixer edges and is the practical default.
@@ -296,11 +296,10 @@ It requires $O(F)$ mixer edges and is the practical default.
 The complete mixer uses every pair:
 
 $$
-\mathcal{H}_{r} = \mathrm{mathrm}{span} \left\{ |x\rangle : \sum_{i} x_{i} = r \right\}
+E = \{ (i,j) : 0 \le i \lt j \lt F \}
 $$
 
-It improves direct exchange connectivity but requires $O(F^2)$ interactions and
-a deeper physical circuit.
+It improves direct exchange connectivity but requires $O(F^2)$ interactions and a deeper physical circuit.
 
 ## 11. Initial States
 
@@ -309,7 +308,8 @@ a deeper physical circuit.
 The default state is the current window support:
 
 $$
-|\psi_0\rangle=|x^{\mathrm{current}}\rangle.
+
+|\psi_{0}\rangle = |x^{\mathrm{current}}\rangle
 $$
 
 It already has the required Hamming weight and is easy to prepare.
@@ -319,11 +319,11 @@ It already has the required Hamming weight and is easy to prepare.
 The optional Dicke state is
 
 $$
-|D_F^r\rangle = \frac{1}{\sqrt{\binom Fr}} \sum_{\sum_i x_i=r}|x\rangle.
+
+|D_{F}^{r}\rangle = \frac{1}{\sqrt{\binom{F}{r}}} \sum_{\sum_{i} x_{i} = r} |x\rangle
 $$
 
-It is an ablation that gives equal initial amplitude to all fixed-weight states
-but requires more expensive preparation.
+It is an ablation that gives equal initial amplitude to all fixed-weight states but requires more expensive preparation.
 
 ## 12. QAOA State and Objective
 
