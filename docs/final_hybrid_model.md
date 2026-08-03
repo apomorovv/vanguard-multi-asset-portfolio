@@ -1,436 +1,465 @@
-# Hybrid Portfolio Model and Algorithm
+# Hybrid Portfolio Algorithm
 
-This document defines the mathematical model and optimization algorithm implemented by the hybrid benchmark.
+## 1. Overview
 
-Legacy equal-lot solvers remain available as small-instance classical baselines. They are not part of the continuous-weight hybrid optimization path described here.
+The hybrid optimizer separates two decisions that have different mathematical
+structures:
 
-## 1. Decision Variables
+1. **Support selection:** which assets should be held?
+2. **Continuous allocation:** what exact percentage should each selected asset
+   receive?
 
-For each asset \(i\):
+Support selection is combinatorial. Allocation on a fixed support is a convex
+continuous optimization problem. The project uses classical large-neighborhood
+search and XY-QAOA to propose support changes, then uses the same classical
+allocation oracle and validator for every proposal.
 
-- \(z_i \in \{0,1\}\) indicates whether asset \(i\) is held.
-- \(w_i \ge 0\) is the exact portfolio weight assigned to asset \(i\).
-- \(t_i \ge |w_i-w_i^0|\) represents the turnover associated with asset \(i\).
+The final portfolio is never taken directly from a quantum bitstring.
 
-The main benchmark fixes the number of selected holdings:
+## 2. End-to-End Pipeline
 
-$$
-\sum_i z_i = K.
-$$
+```mermaid
+flowchart TD
+    A["Validate problem data"] --> B["Solve full-universe convex relaxation"]
+    B --> C["Construct valid exact-K support"]
+    C --> D["Optimize weights on that support"]
+    D --> E["Build adaptive change window"]
+    E --> F["Build window QUBO surrogate"]
+    F --> G1["Exact enumeration or tabu/LNS"]
+    F --> G2["Fixed-cardinality XY-QAOA"]
+    G1 --> H["Allocation oracle"]
+    G2 --> H
+    H --> I["Independent validation"]
+    I -->|"better and valid"| D
+    I -->|"invalid or not better"| E
+    D --> J["Optional Gurobi MIQP reference"]
+    J --> K["Write auditable artifacts"]
+```
 
-Continuous portfolio weights are linked to the binary support variables through
+## 3. Stage 0: Input Validation
 
-$$
-m_i z_i \le w_i \le u_i z_i.
-$$
+Before optimization, `PortfolioProblem` verifies:
 
-Here, \(m_i\) and \(u_i\) are the minimum and maximum permitted weights for asset \(i\).
+- all arrays have the expected dimensions;
+- all numerical values are finite;
+- asset and group names are unique;
+- every asset references an existing group;
+- costs and volatilities are nonnegative;
+- lower bounds do not exceed upper bounds;
+- asset bounds can satisfy the budget;
+- dense covariance and correlation matrices are symmetric;
+- the correlation diagonal is one;
+- covariance equals `corr * outer(sigma, sigma)`;
+- the covariance or factor covariance is positive semidefinite;
+- a supplied factor model reconstructs the dense covariance when both are
+  present;
+- factor-model diagonal variance equals `sigma**2`.
 
-This is not an equal-weight portfolio model. Two selected assets may receive substantially different portfolio weights.
+`PortfolioConstraints` separately verifies cardinality, eligibility, mandatory
+assets, maximum weights, factor bands, stress arrays, and CVaR scenario data.
 
-## 2. Objective Function and Factor Risk
+Invalid data raise an error. The optimizer does not silently repair user input.
 
-Every final candidate minimizes the canonical portfolio objective
+## 4. Stage 1: Full-Universe Convex Relaxation
 
-$$
-F(w)
-=
-\lambda_r w^\top \Sigma w
--
-\lambda_g \mu^\top w
--
-\lambda_y y^\top w
-+
-\lambda_c c^\top t.
-$$
-
-The terms represent:
-
-- portfolio risk, \(w^\top \Sigma w\);
-- expected return, \(\mu^\top w\);
-- income or yield, \(y^\top w\);
-- transaction costs and turnover, \(c^\top t\).
-
-When factor-model data are available, the covariance matrix is represented as
-
-$$
-\Sigma = B\Omega B^\top + D,
-$$
-
-where:
-
-- \(B\) is the asset-factor exposure matrix;
-- \(\Omega\) is the factor covariance matrix;
-- \(D\) is the diagonal idiosyncratic-risk matrix.
-
-The portfolio risk can then be evaluated as
-
-$$
-w^\top \Sigma w
-=
-(B^\top w)^\top \Omega (B^\top w)
-+
-\sum_i D_{ii}w_i^2.
-$$
-
-`PortfolioProblem.cov` may be retained for audits on small instances. Large runs can omit both dense covariance and correlation matrices. All required matrix-vector products and support submatrices are reconstructed from the factor representation.
-
-## 3. Hard Constraints
-
-The always-active base constraints include:
-
-- full investment of the available budget;
-- long-only portfolio weights;
-- asset-level weight bounds;
-- group-level weight bounds;
-- asset eligibility;
-- mandatory holdings;
-- binary-to-continuous support linkage;
-- independent post-solution validation.
-
-The benchmark normally also enables:
+The first solve removes:
 
 - exact cardinality;
-- minimum active weight;
-- maximum position size;
-- turnover awareness;
-- transaction-cost awareness.
+- minimum active weight.
 
-Data-dependent optional constraints include the following.
-
-### 3.1 Minimum Expected Return
-
-$$
-\mu^\top w \ge R_{\min}.
-$$
-
-### 3.2 Minimum Income or Yield
-
-$$
-y^\top w \ge Y_{\min}.
-$$
-
-### 3.3 Factor-Exposure Bounds
-
-$$
-f_{\min} \le B^\top w \le f_{\max}.
-$$
-
-### 3.4 Stress-Scenario Requirements
-
-For stress scenario \(s\),
-
-$$
-r_s^\top w \ge s_s.
-$$
-
-### 3.5 Empirical CVaR Limit
-
-The empirical Conditional Value at Risk constraint is represented by
-
-$$
-\eta
-+
-\frac{1}{(1-\alpha)S}
-\sum_{s=1}^{S} u_s
-\le C_{\max},
-$$
-
-subject to
-
-$$
-u_s \ge -r_s^\top w-\eta,
-$$
-
-and
-
-$$
-u_s \ge 0.
-$$
-
-The fixed-support SciPy oracle and the Gurobi MIQP model use this linear epigraph formulation. The validator independently recomputes empirical CVaR from the returned portfolio weights.
-
-## 4. Full-Universe Relaxation
-
-The first optimization step temporarily removes:
-
-- the exact-cardinality constraint;
-- the minimum-active-weight constraints.
-
-All remaining convex financial constraints are retained.
+It retains the other convex financial rules, including budget, base bounds,
+groups, turnover, target return, income, factor, stress, and CVaR constraints
+when configured.
 
 The relaxation returns:
 
-- provisional portfolio weights;
-- a lower bound on the sparse optimization objective;
-- asset-attractiveness information;
-- marginal-risk signals;
-- binding group constraints;
-- binding factor constraints.
+- provisional full-universe weights;
+- a lower bound on the sparse minimization objective;
+- a ranking signal for potential holdings;
+- marginal risk information;
+- information about binding groups and factors.
 
-The factor-QP variables are
-
-$$
-[w,t,f],
-$$
-
-with the linear factor-exposure definition
+For factor-native instances, the QP uses variables
 
 $$
-f = B^\top w.
+x=[w,t,f],
 $$
 
-The quadratic objective contains only:
+with
 
-- diagonal idiosyncratic risk from \(D\);
-- the relatively small factor covariance block \(\Omega\).
+$$
+f=B^\top w.
+$$
 
-This avoids constructing or factorizing a dense full-universe covariance matrix.
+The quadratic block contains the diagonal idiosyncratic-risk terms and the small
+factor covariance block. A dense $n\times n$ covariance matrix is not required.
 
-## 5. Guaranteed Valid Initial Portfolio
+## 5. Stage 2: Construct a Valid Initial Portfolio
 
-The initializer protects:
+The neighborhood search cannot begin from an invalid portfolio.
 
-- all mandatory assets;
-- at least one strong candidate from every group with a positive minimum-weight requirement.
+The initializer first protects:
 
-The remaining portfolio slots are ranked using:
+- mandatory assets;
+- assets with positive base lower bounds;
+- at least one strong candidate from every group whose lower bound requires
+  representation.
 
-- the continuous relaxation;
-- the smooth marginal objective;
-- asset-level attractiveness signals.
+Remaining slots are ranked using relaxation weights and marginal objective
+signals.
 
-When this initial support is not valid, a SciPy/HiGHS feasibility MILP jointly determines continuous weights and binary support decisions under:
+Every proposed support is passed to the allocation oracle. If deterministic
+ranked trials fail, a SciPy/HiGHS feasibility MILP jointly searches for:
 
+- binary support variables;
+- continuous weights;
 - exact cardinality;
 - support linkage;
-- group constraints;
-- turnover constraints;
-- income constraints;
-- factor-exposure constraints;
-- stress constraints;
+- budget;
+- group bounds;
+- turnover;
+- target return;
+- income;
+- factor bands;
+- stress floors;
 - CVaR constraints.
 
-Each support returned by the feasibility procedure is reoptimized by the continuous allocation oracle.
+Randomized trials and safe tiny enumeration are fallbacks. The pipeline stops
+with an explicit infeasibility error if no valid exact-$K$ portfolio can be
+constructed.
 
-Randomized weighted trials and safe enumeration of tiny instances remain available as time-limit fallbacks.
+No quantum routine runs before this stage succeeds.
 
-The search stops only after a fully valid portfolio containing exactly \(K\) assets has been found. If the feasibility MILP proves that the model is infeasible, the pipeline terminates with an explicit error.
+## 6. Stage 3: Adaptive Change Window
 
-No quantum optimization routine runs before a valid initial portfolio exists.
+At hybrid iteration $j$, the current support is divided into:
 
-## 6. Adaptive Change Window
+- **frozen holdings:** selected assets that remain outside the current window;
+- **removable holdings:** relatively weak selected assets placed inside the
+  window;
+- **unheld candidates:** promising eligible assets placed inside the window.
 
-At hybrid iteration \(j\), the current portfolio is divided into:
+Mandatory assets and positive-lower-bound assets are not offered as removable.
 
-- selected assets frozen outside the change window;
-- weak removable holdings inside the window;
-- promising eligible unheld assets inside the window.
+Candidate ranking may use:
 
-Mandatory assets and assets with positive required lower bounds are never presented as removable candidates.
+- relaxation weight;
+- current marginal objective contribution;
+- covariance or correlation information;
+- group slack and group pressure;
+- optional market-community labels;
+- whether an unheld asset was already explored in an earlier window.
 
-Group slack and optional market-community information influence the ranking of window candidates, but they do not remove assets from the global investment universe.
-
-Suppose \(r\) assets inside the window are currently selected. Every candidate window solution must satisfy
+Let the window contain $F$ assets, and let $r$ of them currently be held. A
+window bitstring $x\in\{0,1\}^F$ must satisfy
 
 $$
-\sum_{i\in W} x_i = r.
+\sum_{i=1}^F x_i=r.
 $$
 
-The frozen support contains \(K-r\) assets. Therefore, preserving \(r\) selected assets inside the window also preserves the full-portfolio cardinality:
+The frozen support contains $K-r$ assets, so every fixed-weight window proposal
+preserves the full portfolio cardinality:
 
 $$
 (K-r)+r=K.
 $$
 
-## 7. Window Surrogate
+## 7. Stage 4: Window QUBO Surrogate
 
-Let \(a\) denote the equal proxy notional assigned to each selected window asset, and let \(w_F\) denote the frozen allocation outside the window.
+The QUBO is a proposal-ranking model, not the final financial model.
 
-The surrogate allocation is
+Let:
+
+- $w_F$ be the current allocation with all window entries set to zero;
+- $C_W$ be the total capital currently assigned to window assets;
+- $a=C_W/r$ be the equal proxy weight assigned to each selected window asset;
+- $S_Wx$ map window bits to the full asset universe.
+
+The proxy portfolio is
 
 $$
-\widetilde{w}(x)=w_F+aS_Wx,
+\widetilde w(x)=w_F+aS_Wx.
 $$
 
-where \(S_W\) maps the binary window vector \(x\) into the full asset universe.
-
-Expanding the canonical objective produces a quadratic binary model:
+Substituting this proxy into the canonical objective gives
 
 $$
-x^\top Qx+h^\top x+\text{constant}.
+E(x)=x^\top Qx+h^\top x+\kappa.
 $$
 
-The matrix \(Q\) contains covariance interactions between window assets.
+### 7.1 Quadratic Term
 
-The linear vector \(h\) contains:
+$$
+Q
+=
+\lambda_{\mathrm{risk}}a^2\Sigma_{WW},
+$$
 
-- covariance interactions with frozen holdings;
-- expected-return contributions;
-- income or yield contributions;
-- binary-exact proxy transaction-cost changes;
-- group-pressure signals.
+where $\Sigma_{WW}$ is the covariance block for window assets.
 
-Strong-interaction sparsification is optional when targeting quantum hardware. Sparsification affects only proposal quality because every proposed support is subsequently evaluated using the complete covariance model and the full continuous allocation oracle.
+### 7.2 Linear Term
 
-## 8. Classical Window Search
+The linear coefficients include:
 
-Tiny fixed-cardinality windows are solved by exact enumeration.
+- covariance with frozen holdings;
+- expected return;
+- income;
+- proxy transaction-cost changes;
+- optional group-pressure adjustments.
 
-Larger windows use tabu search and large-neighborhood search:
+In compact form,
 
-1. Generate \(1\rightarrow0\) and \(0\rightarrow1\) swap neighbors.
-2. Rank the neighbors using the QUBO surrogate energy.
-3. Send only the most promising supports to the continuous allocation oracle.
-4. Cache duplicate supports.
-5. Retain the best valid support according to the exact financial objective.
-6. Use tabu tenure and fixed-weight randomized restarts to escape local minima.
+$$
+h
+=
+2\lambda_{\mathrm{risk}}a(\Sigma w_F)_W
+-
+\lambda_{\mathrm{return}}a\mu_W
+-
+\lambda_{\mathrm{income}}ay_W
++
+h_{\mathrm{cost}}
++
+h_{\mathrm{group}}.
+$$
 
-The surrogate identifies promising combinations, while the allocation oracle determines their exact continuous portfolio weights.
+For the equal proxy notional, the transaction-cost change is binary-linear and
+is represented exactly relative to the proxy.
 
-## 9. XY-QAOA
+### 7.3 Optional Sparsification
 
-The cost Hamiltonian is obtained by converting the window QUBO into an Ising Hamiltonian.
+Weak pair interactions may be removed, or the number of retained edges may be
+capped for hardware experiments. This changes only proposal quality. Every
+candidate still returns to the complete factor/covariance model and full
+constraint set.
 
-The XY mixer is
+### 7.4 Penalty-QAOA Ablation
+
+The standard X-mixer comparison adds
+
+$$
+P\left(\sum_i x_i-r\right)^2
+$$
+
+to the QUBO. The production XY-QAOA path does not require this cardinality
+penalty because its mixer preserves Hamming weight ideally.
+
+## 8. Stage 5A: Classical Window Search
+
+### 8.1 Exact Enumeration
+
+When
+
+$$
+\binom{F}{r}
+$$
+
+is below the configured safety threshold, every fixed-weight window state can
+be enumerated.
+
+Exact enumeration proves the best QUBO state in that window, but not the global
+portfolio optimum. The best QUBO state can still fail the full allocation
+problem.
+
+### 8.2 Tabu and Large-Neighborhood Search
+
+For larger windows:
+
+1. start from the current window bitstring;
+2. generate one-for-one swaps;
+3. rank neighbors by QUBO energy;
+4. submit only the best distinct supports to the allocation oracle;
+5. cache duplicate supports;
+6. use tabu tenure to avoid immediate reversals;
+7. use seeded restarts when useful;
+8. retain the best valid portfolio objective.
+
+The QUBO is cheap enough to screen many neighbors. The allocation oracle is
+reserved for the most promising supports.
+
+## 9. Stage 5B: Fixed-Cardinality XY-QAOA
+
+### 9.1 Cost Hamiltonian
+
+The QUBO is converted to an Ising Hamiltonian
+
+$$
+H_C
+=
+c_0I
++
+\sum_i h_iZ_i
++
+\sum_{i<j}J_{ij}Z_iZ_j.
+$$
+
+### 9.2 XY Mixer
+
+The mixer is
 
 $$
 H_M
 =
 \frac{1}{2}
 \sum_{(i,j)\in E}
-\left(
-X_iX_j+Y_iY_j
-\right).
+(X_iX_j+Y_iY_j).
 $$
 
-An XY interaction exchanges the computational-basis states \(10\) and \(01\). It therefore preserves physical Hamming weight.
+Each interaction exchanges basis states `10` and `01`. It does not create or
+destroy an excitation. Therefore, it preserves Hamming weight in the ideal
+circuit.
 
-Starting from the current \(r\)-asset window bitstring ensures that every ideal sample continues to contain exactly \(r\) selected window assets.
+The graph $E$ is either:
 
-The parameterized quantum state is
+- a ring, which gives a shallow default circuit;
+- a complete graph, used as an ablation at higher gate cost.
+
+### 9.3 Initial State
+
+The default warm start is the current window bitstring. It already contains
+exactly $r$ selected assets.
+
+A Dicke-state initialization is available as an ablation. It starts from a
+uniform superposition over all fixed-weight states but requires more expensive
+state preparation.
+
+### 9.4 Variational State
+
+For depth $p$,
 
 $$
-\lvert\psi(\gamma,\beta)\rangle
+|\psi(\gamma,\beta)\rangle
 =
-\prod_{l=1}^{p}
-e^{-i\beta_lH_M}
-e^{-i\gamma_lH_C}
-\lvert\psi_0\rangle.
+\prod_{\ell=1}^p
+e^{-i\beta_\ell H_M}
+e^{-i\gamma_\ell H_C}
+|\psi_0\rangle.
 $$
 
-The default configuration uses:
+Cost coefficients are normalized before angle optimization. Multiple seeded
+COBYLA starts reduce sensitivity to one initial angle vector.
 
-- a shallow circuit;
-- a warm start from the current support;
-- a ring mixer.
+### 9.5 Exact Fixed-Weight Subspace Simulator
 
-Dicke-state initialization and a complete mixer are retained as explicit ablation configurations.
-
-Cost coefficients are normalized before variational-angle optimization. Multiple COBYLA starts are independently seeded and recorded.
-
-### 9.1 Fixed-Weight Subspace Simulator
-
-The portable subspace simulator stores only
+The dependency-free reference simulator stores only
 
 $$
 \binom{F}{r}
 $$
 
-basis states, where \(F\) is the window size and \(r\) is the required Hamming weight.
+basis states rather than all $2^F$ computational states.
 
-This exact fixed-weight CPU simulator is used to optimize the variational angles.
+For the default 16-qubit, 7-excitation window,
 
-### 9.2 Aer and IBM Runtime Execution
+$$
+\binom{16}{7}=11{,}440.
+$$
 
-Aer compiles and samples the same logical circuit on either CPU or GPU.
+This compact CPU simulator optimizes the angles and serves as the deterministic
+algorithmic reference.
 
-Repeatedly sending the default 16-qubit COBYLA objective evaluations to a GPU would generally introduce more kernel-launch and transfer overhead than useful computation. The GPU backend is therefore intended primarily for larger simulation workloads or explicit backend comparisons.
+### 9.6 Aer and IBM Sampling
 
-IBM Runtime sampling requires an explicitly selected backend.
+After angle optimization, the same logical circuit may be sampled with:
 
-Every execution outside the subspace simulator records:
+- Qiskit Aer CPU;
+- Qiskit Aer GPU;
+- IBM Runtime hardware.
 
-- requested device;
-- actual device;
-- phase timings;
-- cardinality feasibility;
-- circuit depth;
-- gate counts;
-- additional circuit-resource information.
+The requested and actual execution devices, phase timings, circuit depth,
+operation counts, shot counts, and cardinality rate are recorded.
 
-These values are written to:
+A noisy physical circuit may produce invalid-cardinality samples even though
+the ideal XY dynamics preserve cardinality. Those samples are reported and are
+not silently counted as valid portfolios.
 
-- `quantum_execution.csv`;
-- `hybrid_diagnostics.json`.
+## 10. Stage 6: Fixed-Support Allocation Oracle
 
-## 10. Allocation Oracle and Validation
+For each classical or quantum support:
 
-For every support proposed by a classical or quantum method, the allocation oracle performs the following steps:
+1. reject invalid asset indices, ineligible assets, missing mandatory assets, or
+   incorrect cardinality;
+2. set every outside-support upper bound to zero;
+3. apply the active lower bound to selected assets;
+4. account for turnover caused by liquidating outside-support current holdings;
+5. solve the reduced continuous model;
+6. reconstruct the full-universe weight vector;
+7. independently validate every configured rule;
+8. cache the result by support.
 
-1. Set all upper bounds outside the proposed support to zero.
-2. Apply active-position lower bounds to selected assets.
-3. Solve the continuous convex financial model.
-4. Independently recompute every base and optional constraint.
-5. Reject the support when any violation exceeds the configured tolerance.
-6. Cache the support and its result.
+A support is accepted only when the reconstructed full-universe portfolio has
+zero breaches above tolerance.
 
-Portfolio weights are never clipped or renormalized after optimization. Such modifications could invalidate constraints or destroy optimality for the fixed support.
+Weights are not clipped or renormalized after solving.
 
-## 11. Exact Reference Model
+## 11. Stage 7: Incumbent Update
 
-The final direct Gurobi model includes:
+The current portfolio is replaced only when a candidate is:
 
-- continuous portfolio weights \(w\);
-- binary support variables \(z\);
-- turnover epigraph variables \(t\);
-- factorized portfolio risk;
+- successfully allocated;
+- independently feasible;
+- strictly better in the canonical objective by more than numerical noise.
+
+A low QUBO energy alone is insufficient.
+
+## 12. Stage 8: Optional Gurobi Reference
+
+The direct Gurobi model contains:
+
+- continuous weights $w$;
+- binary support variables $z$;
+- turnover epigraph variables $t$;
+- factorized risk;
 - exact cardinality;
 - all configured hard constraints;
 - the best hybrid portfolio as a MIP start.
 
-A time-limited Gurobi run returns:
+A time-limited run reports:
 
-- incumbent objective value;
-- best objective bound;
-- reported optimality gap;
-- explored node count;
-- model-build time;
-- solve time.
+- incumbent objective;
+- best bound;
+- MIP gap;
+- node count;
+- build time;
+- solve time;
+- status.
 
-Only a solver status proving optimality is described as global certification. Any such claim is reported together with:
+Only an optimal solver status, together with its numerical gap and configured
+tolerance, is a global certificate.
 
-- the configured solver tolerance;
-- the numerical MIP gap.
+If the time limit is reached, a validated incumbent remains useful but is not
+called globally optimal.
 
-Fixed-support QP optimality is recorded separately. It does not upgrade an LNS or QAOA result to global optimality over all possible supports.
+## 13. Fair Method Comparison
 
-## 12. Required Comparisons
+The following comparisons should use the same problem, constraints, windows,
+seeds, and timing convention:
 
-The benchmark includes the following comparisons:
-
-- continuous factor-QP lower bound;
+- continuous relaxation;
 - valid initialization;
-- exact classical enumeration on tiny windows;
-- classical tabu search and large-neighborhood search;
-- XY-QAOA using the same windows and allocation oracle;
-- standard X-mixer penalty-QAOA;
-- Gurobi exact-cardinality MIQP;
-- optional equal-lot classical baselines for small instances.
+- exact window enumeration when tractable;
+- tabu/LNS;
+- fixed-cardinality XY-QAOA;
+- X-mixer penalty-QAOA;
+- direct Gurobi exact-cardinality MIQP;
+- optional equal-lot small-instance baselines.
 
-The primary performance comparison assigns equal end-to-end runtime to each method.
+The primary comparison uses equal end-to-end time, including model building,
+angle optimization, sampling, allocation, validation, and queue time where
+applicable.
 
-A secondary warm-start comparison may give every method the same amount of final Gurobi refinement time.
+## 14. Correct Interpretation
 
-## 13. Interpretation
+The quantum component:
 
-The quantum circuit does not:
+- does propose candidate asset combinations;
+- does preserve window cardinality ideally under XY dynamics;
+- does not calculate final percentages;
+- does not directly enforce every financial guardrail;
+- does not replace the allocation oracle;
+- does not replace independent validation;
+- does not automatically prove quantum advantage;
+- does not make a heuristic result globally optimal.
 
-- calculate final portfolio percentages;
-- validate financial constraints;
-- replace the continuous allocation solver;
-- replace Gurobi as the exact reference method.
-
-Its role is to propose asset combinations within a constraint-preserving neighborhood.
-
-The defensible contribution of the hybrid approach is a constraint-preserving quantum neighborhood search embedded within a scalable, auditable classical optimization and validation system.
+The defensible contribution is a constraint-preserving quantum neighborhood
+embedded in a scalable and auditable classical portfolio system.
