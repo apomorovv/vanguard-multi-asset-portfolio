@@ -225,14 +225,15 @@ support is reallocated and evaluated with the complete risk model.
 Binary and spin variables are related by
 
 $$
-x_i=\frac{1-Z_i}{2}.
+x_{i}=\frac{1-Z_{i}}{2}
 $$
 
 The cost Hamiltonian has the form
 
 $$
-H_C = c_0I + \sum_{i=1}^{F}h_i^{(Z)}Z_i + \sum_{i<j}J_{ij}Z_iZ_j.
+H_{C} = c_{0}I + \sum_{i=1}^{F}h_{i}^{(Z)}Z_{i} + \sum_{i<j}J_{ij}Z_{i}Z_{j}
 $$
+
 
 The implementation produces:
 
