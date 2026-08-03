@@ -58,15 +58,8 @@ raise an exception.
 For a test weight vector $w$, compare the direct objective
 
 $$
-F_{\mathrm{direct}}(w)
-=
-\lambda_{\mathrm{risk}}w^\top\Sigma w
--
-\lambda_{\mathrm{return}}\mu^\top w
--
-\lambda_{\mathrm{income}}y^\top w
-+
-\lambda_{\mathrm{cost}}c^\top|w-w^0|
+F_{\mathrm{direct}}(w) = \lambda_{\mathrm{risk}}w^\top\Sigma w - \lambda_{\mathrm{return}}\mu^\top w -
+\lambda_{\mathrm{income}}y^\top w + \lambda_{\mathrm{cost}}c^\top|w-w^0|
 $$
 
 with the solver representation.
@@ -74,9 +67,7 @@ with the solver representation.
 For OSQP form,
 
 $$
-F_{\mathrm{qp}}(x)
-=
-\frac12x^\top Px+q^\top x,
+F_{\mathrm{qp}}(x) = \frac12x^\top Px+q^\top x,
 $$
 
 where $x=[w,t]$ or $x=[w,t,f]$ and $t=|w-w^0|$.
