@@ -27,9 +27,6 @@ For a fixed support window and transferred QAOA angles:
 > meaningful fixed-cardinality rate and producing competitive validated
 > portfolios after exact reallocation?
 
-This question is narrower and more defensible than claiming that the QPU
-optimizes the entire asset universe.
-
 ## 3. Primary Outputs
 
 Report:
