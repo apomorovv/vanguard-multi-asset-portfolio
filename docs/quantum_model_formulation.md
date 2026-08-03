@@ -308,7 +308,6 @@ It improves direct exchange connectivity but requires $O(F^2)$ interactions and 
 The default state is the current window support:
 
 $$
-
 |\psi_{0}\rangle = |x^{\mathrm{current}}\rangle
 $$
 
@@ -319,7 +318,6 @@ It already has the required Hamming weight and is easy to prepare.
 The optional Dicke state is
 
 $$
-
 |D_{F}^{r}\rangle = \frac{1}{\sqrt{\binom{F}{r}}} \sum_{\sum_{i} x_{i} = r} |x\rangle
 $$
 
