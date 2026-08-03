@@ -296,7 +296,7 @@ It requires $O(F)$ mixer edges and is the practical default.
 The complete mixer uses every pair:
 
 $$
-E = \{ (i,j) : 0 \le i \lt j \lt F \}
+\mathcal{H}_{r} = \mathrm{mathrm}{span} \left\{ |x\rangle : \sum_{i} x_{i} = r \right\}
 $$
 
 It improves direct exchange connectivity but requires $O(F^2)$ interactions and
