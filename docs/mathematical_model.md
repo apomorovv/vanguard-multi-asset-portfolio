@@ -73,19 +73,24 @@ negative. It also makes the continuous risk term convex.
 
 ## 4. Factor-Risk Representation
 
-Large instances may omit dense covariance and correlation matrices and instead store
-$$ \Sigma = B\Omega B^\top + D, $$
+Large instances may omit dense covariance and correlation matrices and instead store:
+
+$$
+\Sigma = B\Omega B^\top + D
+$$
 
 where:
-- $B\in\mathbb R^{n\times k}$ contains asset-factor loadings;
-- $\Omega\in\mathbb R^{k\times k}$ is the factor covariance matrix;
-- $D=\mathrm{diag}(d_1,\ldots,d_n)$ contains idiosyncratic variances.
+- $B\in\mathbb{R}^{n\times k}$ contains asset-factor loadings;
+- $\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance matrix;
+- $D = \mathrm{diag}(d_1, \ldots, d_n)$ contains idiosyncratic variances.
 
 For portfolio weights $w$,
-$$ w^\top\Sigma w = (B^\top w)^\top\Omega(B^\top w) + \sum_{i=1}^n d_iw_i^2. $$
 
-This representation avoids storing an $n\times n$ dense matrix. Storage for the
-main risk arrays scales as $O(nk+k^2)$ instead of $O(n^2)$.
+$$
+w^\top\Sigma w = (B^\top w)^\top\Omega(B^\top w) + \sum_{i=1}^n d_iw_i^2
+$$
+
+This representation avoids storing an $n \times n$ dense matrix. Storage for the main risk arrays scales as $O(nk+k^2)$ instead of $O(n^2)$.
 
 The implementation can still recover:
 
