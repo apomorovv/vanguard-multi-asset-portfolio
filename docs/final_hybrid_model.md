@@ -271,7 +271,7 @@ reserved for the most promising supports.
 The QUBO is converted to an Ising Hamiltonian
 
 $$
-H_C = c_0I + \sum_i h_iZ_i + \sum_{i<j}J_{ij}Z_iZ_j
+H_C = c_{0}I + \sum_{i} h_{i}Z_{i} + \sum_{i < j} J_{ij}Z_{i}Z_{j}
 $$
 
 ### 9.2 XY Mixer
