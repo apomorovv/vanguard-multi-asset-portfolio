@@ -1,127 +1,386 @@
 # Validation Protocol
 
-## Gate 1: input integrity
+## 1. Purpose
 
-Before optimization:
+A solver status is not sufficient evidence that a portfolio is valid. Every
+candidate is checked by code that is separate from the candidate-generation
+logic.
 
-- all arrays have consistent dimensions and finite values;
-- asset and group names are unique;
-- each asset belongs to exactly one declared group;
-- correlation is symmetric with unit diagonal;
-- covariance equals `corr * outer(sigma, sigma)`;
-- covariance is PSD;
-- transaction costs are nonnegative;
+The validator receives the unmodified full-universe weight vector. It does not:
+
+- clip small negative values;
+- renormalize the portfolio;
+- round weights to satisfy cardinality;
+- repair group exposure;
+- replace invalid quantum samples with nearby valid samples.
+
+The default hard-feasibility tolerance is $10^{-7}$. The support threshold used
+to decide whether an asset is active is separately configurable and defaults to
+$10^{-8}$.
+
+A tolerance covers floating-point residuals. It does not authorize post-solve
+repair.
+
+## 2. Gate 1: Input Integrity
+
+Before optimization, verify:
+
+- all arrays have consistent dimensions;
+- all values are finite;
+- asset names are unique;
+- group names are unique;
+- every asset belongs to an existing group;
+- returns, yields, costs, bounds, and current weights use consistent decimal
+  units;
+- costs and volatilities are nonnegative;
 - lower bounds do not exceed upper bounds;
-- asset bounds can satisfy the budget;
-- the synthetic current portfolio is feasible.
+- aggregate asset bounds can satisfy the budget;
+- group lower bounds do not exceed group upper bounds;
+- correlation is symmetric with a unit diagonal;
+- covariance is symmetric;
+- covariance equals `corr * outer(sigma, sigma)`;
+- covariance is positive semidefinite;
+- factor covariance is positive semidefinite;
+- idiosyncratic variances are nonnegative;
+- the factor model diagonal equals `sigma**2`;
+- a supplied factor model reconstructs dense covariance when both are present;
+- optional constraint arrays have the required shapes;
+- mandatory assets are eligible;
+- exact cardinality is compatible with eligible and mandatory sets;
+- minimum active weights can fit inside the budget.
 
-Invalid input raises an exception instead of being silently repaired. Synthetic
-generation may explicitly construct/project a valid PSD correlation before it
-creates a `PortfolioProblem`.
+Synthetic data generation may deliberately project or construct valid
+correlation data before creating `PortfolioProblem`. User-supplied invalid data
+raise an exception.
 
-## Gate 2: algebraic equivalence
+## 3. Gate 2: Objective Equivalence
 
-For a feasible test vector \(w\), verify:
+For a test weight vector $w$, compare the direct objective
 
-\[
+$$
 F_{\mathrm{direct}}(w)
-=\tfrac12x^TPx+q^Tx,
-\qquad x=[w,|w-w^{(0)}|].
-\]
+=
+\lambda_{\mathrm{risk}}w^\top\Sigma w
+-
+\lambda_{\mathrm{return}}\mu^\top w
+-
+\lambda_{\mathrm{income}}y^\top w
++
+\lambda_{\mathrm{cost}}c^\top|w-w^0|
+$$
 
-This catches the most common factor-of-two and sign errors.
+with the solver representation.
 
-## Gate 3: independent feasibility
+For OSQP form,
 
-Every decoded candidate is checked without clipping or renormalization. The
-validator reports one check per constraint, signed slack, breach count, and the
-largest raw violation.
+$$
+F_{\mathrm{qp}}(x)
+=
+\frac12x^\top Px+q^\top x,
+$$
 
-The default feasibility tolerance is \(10^{-7}\). A tolerance excuses numerical
-roundoff; it does not authorize post-solve repair.
+where $x=[w,t]$ or $x=[w,t,f]$ and $t=|w-w^0|$.
 
-Discrete candidates additionally satisfy:
+Verify
 
-\[
-\frac{w_i}{B/M}\in\mathbb Z\quad\forall i.
-\]
+$$
+F_{\mathrm{direct}}(w)=F_{\mathrm{qp}}(x)
+$$
 
-Hybrid sparse candidates additionally check exact cardinality, minimum active
-weight, eligibility, mandatory holdings, implementation-specific weight caps,
-income/factor/stress rules, and empirical CVaR when configured. The validator
-receives the full-universe weight vector even though the allocation QP is
-solved in support-reduced coordinates.
+within numerical tolerance.
 
-Raw quantum bitstrings are not portfolios. They become reportable only after:
+This test catches:
 
-1. fixed-Hamming-weight decoding;
-2. full-support reconstruction with frozen holdings;
-3. exact continuous allocation;
-4. independent full-universe validation.
+- a missing factor of two in the quadratic block;
+- a wrong return or income sign;
+- a missing cost coefficient;
+- an incorrect factor-link equation;
+- inconsistent dense and factor risk.
 
-## Gate 4: optimality relationships
+## 4. Gate 3: Base Constraint Validation
 
-For each preference configuration:
+For every candidate $w$, check:
 
-1. Continuous optimum \(\le\) exact discrete optimum.
-2. Exact discrete optimum \(\le\) every feasible heuristic objective.
-3. Enumeration = optimal MIQP at identical \(M\), within tolerance.
-4. Independent continuous backends agree within numerical tolerance.
-5. The continuous relaxation is no worse than any exact-`K` feasible result.
-6. XY-QAOA ideal samples have the required window Hamming weight.
-7. A heuristic or time-limited result is never labeled globally optimal.
+### 4.1 Budget
 
-## Gate 5: reproducibility
+$$
+\sum_i w_i=B_{\mathrm{budget}}.
+$$
 
-- synthetic inputs are deterministic;
-- random universes and heuristics store their seeds;
-- the configuration file is saved with the experiment;
-- all stochastic raw runs are retained;
-- runtime comparisons identify the machine/environment separately when used in
-  a paper or presentation.
-- each run has a unique `run_id` shared by run, allocation, constraint, and
-  diagnostic artifacts;
-- exact solver options and repetitions are retained in `resolved_config.yaml`;
-- exact problem bytes are represented by a SHA-256 fingerprint;
-- every generated artifact is listed with its size and SHA-256 checksum.
+### 4.2 Asset Bounds
 
-## Gate 6: graphics
+$$
+\ell_i\le w_i\le u_i.
+$$
 
-Each benchmark run must produce and visually inspect:
+### 4.3 Group Bounds
 
-- allocation comparison;
-- risk-return scatter;
-- runtime comparison;
-- optimality-gap comparison;
-- correlation heatmap;
-- hard-constraint slack plot;
-- risk-aversion sweep when enabled.
+$$
+L_g\le\sum_i A_{gi}w_i\le U_g.
+$$
 
-Plots are explanatory outputs. CSV/JSON results remain the auditable source.
+### 4.4 Target Return
 
-For large universes, allocation plots show the 30 largest assets plus an
-aggregate remainder, correlation tick labels are hidden above 60 assets, and
-constraint plots show the 50 most binding/violated limits. No information is
-discarded from `allocation_weights.csv` or `constraint_checks.csv`.
+When configured,
 
-## Gate 7: large-instance safety
+$$
+\mu^\top w\ge R_{\min}.
+$$
 
-- enumeration must remain below its configured candidate-count guard;
-- large heuristic starts must be found and validated without recursive
-  enumeration;
-- finite candidate-pool local search must not be described as a complete
-  one-swap optimum;
-- time-limited MIQP runs must preserve incumbent, best bound, and gap when
-  available;
-- all accepted large-instance results must pass the same unmodified-weight
-  validation used for tiny tests.
+### 4.5 Turnover
 
-## Test commands
+When configured,
+
+$$
+\sum_i|w_i-w_i^0|\le T_{\max}.
+$$
+
+Each check records:
+
+- constraint name;
+- sense;
+- left-hand side;
+- right-hand side;
+- signed slack;
+- raw violation;
+- pass or fail at the configured tolerance.
+
+## 5. Gate 4: Sparse-Support Validation
+
+When hybrid constraints are present, also check:
+
+### 5.1 Eligibility
+
+Every ineligible asset has zero weight.
+
+### 5.2 Mandatory Holdings
+
+Every mandatory asset has at least the required active weight.
+
+### 5.3 Exact Cardinality
+
+$$
+\#\{i:w_i>\tau_{\mathrm{support}}\}=K.
+$$
+
+### 5.4 Minimum Active Weight
+
+For every active asset,
+
+$$
+w_i\ge m.
+$$
+
+### 5.5 Implementation Maximum Weight
+
+$$
+w_i\le\bar u_i.
+$$
+
+The base upper bound and implementation cap are both checked.
+
+## 6. Gate 5: Optional Financial Constraints
+
+### 6.1 Minimum Income
+
+$$
+y^\top w\ge Y_{\min}.
+$$
+
+### 6.2 Factor Bands
+
+$$
+f=B^\top w,
+$$
+
+$$
+f_{\min}\le f\le f_{\max}.
+$$
+
+### 6.3 Stress Floors
+
+$$
+r_s^\top w\ge q_s.
+$$
+
+### 6.4 Empirical CVaR
+
+Compute losses
+
+$$
+L_s=-R_s^\top w.
+$$
+
+The validator independently evaluates empirical CVaR at level $\alpha$ and
+requires
+
+$$
+\operatorname{CVaR}_\alpha(w)\le C_{\max}.
+$$
+
+It does not reuse the optimizer's $\eta$ and $u_s$ values.
+
+## 7. Gate 6: Equal-Lot Validation
+
+For a discrete model with $M$ lots,
+
+$$
+\delta=\frac{B_{\mathrm{budget}}}{M}.
+$$
+
+Each weight must satisfy
+
+$$
+\frac{w_i}{\delta}\in\mathbb Z
+$$
+
+within numerical tolerance.
+
+The validator also checks the ordinary budget, asset, group, return, and
+turnover constraints on the decoded weights.
+
+## 8. Gate 7: Quantum Candidate Validation
+
+A raw bitstring is not a portfolio.
+
+A quantum sample becomes reportable only after:
+
+1. decoding the logical window bits;
+2. checking the required Hamming weight;
+3. combining selected window assets with the frozen support;
+4. solving the exact fixed-support continuous allocation;
+5. reconstructing the full-universe weight vector;
+6. running every base and optional constraint check.
+
+For ideal subspace XY-QAOA, the cardinality rate should be 100%. For Aer or IBM
+hardware, the raw rate may be lower and must be reported.
+
+Postselection may be analyzed, but raw and postselected rates must not be
+confused.
+
+## 9. Gate 8: Optimality Relationships
+
+On tractable instances, verify:
+
+1. the continuous relaxation objective is no worse than any exact-$K$ feasible
+   objective;
+2. the exact equal-lot optimum is no worse than any equal-lot heuristic;
+3. exact enumeration equals optimal equal-lot MIQP at the same $M$;
+4. independent continuous backends agree within tolerance;
+5. exact window enumeration is no worse in QUBO energy than heuristic window
+   search;
+6. every accepted classical or quantum support passes allocation and validation;
+7. a time-limited or heuristic result is never called globally optimal;
+8. a fixed-support QP optimum is not promoted to a global support certificate.
+
+For minimization, "no worse" means "less than or equal to."
+
+## 10. Gate 9: Solver Status Interpretation
+
+| Situation | Allowed claim |
+|---|---|
+| Continuous solver converged and candidate validates | Valid continuous solution; global optimum is supported by convexity and backend evidence. |
+| Exact enumeration completed | Globally optimal for that finite enumerated model. |
+| Gurobi returns optimal status | Globally optimal within configured tolerances; report numeric MIP gap. |
+| Gurobi reaches time limit with incumbent | Valid incumbent; report best bound and gap. |
+| LNS or QAOA support passes oracle | Valid heuristic incumbent. |
+| Fixed-support QP is optimal | Optimal only for that support. |
+| Quantum sample has correct Hamming weight | Valid support encoding only; financial feasibility still unknown. |
+
+## 11. Gate 10: Reproducibility
+
+Every experiment should preserve:
+
+- Git commit identifier;
+- branch name;
+- exact command;
+- resolved YAML configuration;
+- all random seeds;
+- complete problem data or deterministic generation parameters;
+- solver versions;
+- Python version;
+- operating system and hardware summary;
+- requested and actual quantum backend;
+- all raw stochastic repetitions;
+- unique run identifiers;
+- solver diagnostics;
+- validation checks;
+- artifact checksums.
+
+A reported table should be reproducible without reading values from a figure.
+
+## 12. Gate 11: Timing Integrity
+
+Record end-to-end wall time and, where available:
+
+- data/model preparation;
+- continuous relaxation;
+- feasible initialization;
+- window construction;
+- QUBO construction;
+- angle optimization;
+- circuit setup and transpilation;
+- sampling;
+- allocation-oracle evaluation;
+- validation;
+- Gurobi build and solve;
+- IBM queue-inclusive wall time;
+- IBM reported QPU usage time.
+
+Do not compare a native solver timer against another method's end-to-end time.
+
+## 13. Gate 12: Scaling Safety
+
+- reject exact enumeration before execution when the candidate count exceeds the
+  configured guard;
+- use a MILP feasible start rather than recursive enumeration for large
+  equal-lot instances;
+- do not call a finite-pool local search a complete one-swap optimum;
+- preserve Gurobi incumbent, best bound, node count, and MIP gap;
+- run large sizes in fresh processes when measuring peak memory;
+- distinguish globally certified sizes from heuristic scaling sizes;
+- use the same validator at every universe size.
+
+## 14. Gate 13: Graphics
+
+Every figure must have:
+
+- a descriptive title;
+- labeled axes;
+- units;
+- readable legends;
+- a source table;
+- no claim stronger than the underlying solver evidence.
+
+For large universes, plots may aggregate or display the largest positions, but
+the complete allocation must remain in the CSV output.
+
+## 15. Required Commands
+
+Run the full test suite:
 
 ```bash
 python -m pytest -q
-PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-Optional solver tests may skip only for a clearly reported missing package or
-license. A backend that runs and produces the wrong objective must fail.
+Run a tiny hybrid correctness case:
+
+```bash
+python scripts/run_hybrid.py \
+  --config configs/tiny_hybrid.yaml \
+  --overwrite
+```
+
+Run a portable large case without optional quantum or Gurobi components:
+
+```bash
+python scripts/run_hybrid.py \
+  --config configs/large_hybrid.yaml \
+  --no-quantum \
+  --no-gurobi \
+  --overwrite
+```
+
+Optional solver tests may skip only when a dependency or license is clearly
+reported as unavailable. A backend that runs and returns an incorrect objective
+or invalid portfolio must fail.
