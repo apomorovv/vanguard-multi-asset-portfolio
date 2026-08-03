@@ -472,7 +472,7 @@ $$
 does not guarantee
 
 $$
-F(w^{*}(x_{1})) \lt F(w^{*}(x_{2}))
+F(w^{\ast}(x_{1})) \le F(w^{\ast}(x_{2}))
 $$
 
 The QUBO ranks proposals. The allocation oracle determines actual financial
