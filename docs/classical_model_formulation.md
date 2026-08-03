@@ -18,15 +18,7 @@ These models must use the same canonical objective and independent validator.
 The continuous model minimizes
 
 $$
-F(w)
-=
-\lambda_{\mathrm{risk}}w^\top\Sigma w
--
-\lambda_{\mathrm{return}}\mu^\top w
--
-\lambda_{\mathrm{income}}y^\top w
-+
-\lambda_{\mathrm{cost}}c^\top t
+F(w) = \lambda_{\mathrm{risk}}w^\top\Sigma w - \lambda_{\mathrm{return}}\mu^\top w - \lambda_{\mathrm{income}}y^\top w + \lambda_{\mathrm{cost}}c^\top t
 $$
 
 subject to budget, base asset bounds, group limits, turnover epigraph
