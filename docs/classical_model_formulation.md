@@ -148,13 +148,7 @@ $$
 The integer bounds are
 
 $$
-q_i^{\min}
-=
-\left\lceil\frac{\ell_i}{\delta}\right\rceil,
-\qquad
-q_i^{\max}
-=
-\left\lfloor\frac{u_i}{\delta}\right\rfloor.
+q_i^{\min} = \left\lceil\frac{\ell_i}{\delta}\right\rceil, \qquad q_i^{\max} = \left\lfloor\frac{u_i}{\delta}\right\rfloor
 $$
 
 Lower bounds must round upward and upper bounds downward. Reversing these
