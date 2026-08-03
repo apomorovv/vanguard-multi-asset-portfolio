@@ -357,17 +357,15 @@ $$
 subject to
 
 $$
-u_s \ge L_s(w)-\eta
-=
--R_s^\top w-\eta,
+u_s \ge L_s(w)-\eta = -R_s^\top w-\eta,
 $$
 
 $$
-u_s\ge0.
+u_s \ge 0.
 $$
 
-The fixed-support optimizer and the Gurobi model use this epigraph. The
-validator independently recomputes empirical CVaR from the returned weights.
+The fixed-support optimizer and the Gurobi model use this epigraph. The validator independently recomputes empirical CVaR from the returned weights.
+
 
 ## 11. Related Optimization Problems
 
