@@ -151,7 +151,7 @@ Every mandatory asset has at least the required active weight.
 ### 5.3 Exact Cardinality
 
 $$
-\#\{i:w_i>\tau_{\mathrm{support}}\}=K.
+\#\{i : w_{i} \gt \tau_{\mathrm{support}}\} = K
 $$
 
 ### 5.4 Minimum Active Weight
