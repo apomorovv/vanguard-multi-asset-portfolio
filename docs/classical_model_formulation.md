@@ -63,26 +63,13 @@ for a dense covariance model.
 For the factor-native formulation,
 
 $$
-P
-=
-\operatorname{blockdiag}
-\left(
-2\lambda_{\mathrm{risk}}D,
-0,
-2\lambda_{\mathrm{risk}}\Omega
-\right).
+P = \mathrm{blockdiag} \left( 2\lambda_{\mathrm{risk}}D, 0, 2\lambda_{\mathrm{risk}}\Omega \right)
 $$
 
 The linear vector is
 
 $$
-q
-=
-\begin{bmatrix}
--\lambda_{\mathrm{return}}\mu-\lambda_{\mathrm{income}}y\\
-\lambda_{\mathrm{cost}}c\\
-0
-\end{bmatrix}.
+q = \begin{bmatrix} -\lambda_{\mathrm{return}}\mu-\lambda_{\mathrm{income}}y\\ \lambda_{\mathrm{cost}}c\\ 0 \end{bmatrix}
 $$
 
 The constraint matrix contains rows for:
