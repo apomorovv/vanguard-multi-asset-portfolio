@@ -190,9 +190,7 @@ $$
 ### 7.1 Quadratic Term
 
 $$
-Q
-=
-\lambda_{\mathrm{risk}}a^2\Sigma_{WW},
+Q = \lambda_{\mathrm{risk}}a^2\Sigma_{WW}
 $$
 
 where $\Sigma_{WW}$ is the covariance block for window assets.
