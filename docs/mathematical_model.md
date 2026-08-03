@@ -106,7 +106,7 @@ The final sparse portfolio uses:
 |---|---|---|
 | $w_i$ | continuous, $w_i\ge0$ | Final weight of asset $i$. |
 | $z_i$ | binary | 1 when asset $i$ is selected, otherwise 0. |
-| $t_i$ | continuous, $t_i\ge0$ | Epigraph variable for $|w_i-w_i^0|$. |
+| $t_i$ | continuous, $t_i\ge0$ | Epigraph variable for $\|w_i-w_i^0\|$. |
 | $f_j$ | continuous | Portfolio exposure to factor $j$. |
 | $\eta$ | continuous | VaR threshold used in the CVaR epigraph. |
 | $u_s$ | continuous, $u_s\ge0$ | Scenario loss above $\eta$. |
