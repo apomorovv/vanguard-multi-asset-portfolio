@@ -192,7 +192,7 @@ def solve_continuous_osqp(
         )
     setup_seconds = time.perf_counter() - setup_start
     solve_start = time.perf_counter()
-    solved = solver.solve()
+    solved = solver.solve(raise_error=False)
     solve_seconds = time.perf_counter() - solve_start
     runtime = time.perf_counter() - total_start
     status = str(solved.info.status)

@@ -34,7 +34,7 @@ hybrid:
     # Keep the solver residual comfortably below the independent 1e-7
     # feasibility threshold.  At 2,000 assets, eps=1e-7 can leave bound
     # residuals just above that threshold even when OSQP reports "solved".
-    tol: 1.0e-8
+    tol: 1.0e-10
     max_iter: 500000
   initial_trials: 500
   initial_milp_time_limit: 60
