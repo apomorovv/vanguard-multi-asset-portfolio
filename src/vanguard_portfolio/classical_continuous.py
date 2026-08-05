@@ -7,7 +7,7 @@ optional comparison backends and are imported only when requested.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -23,6 +23,14 @@ from .schemas import (
     SolveResult,
     SolverUnavailableError,
 )
+
+
+def _native_osqp_tolerance(requested: float, n_turnover: int) -> float:
+    value = float(requested)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("tol must be a finite positive number")
+    aggregate_safe = max(1.0e-11, 1.0e-8 / max(1, int(n_turnover)))
+    return min(value, aggregate_safe)
 
 
 def _linear_program_start(problem: PortfolioProblem, data: QPData) -> np.ndarray:
@@ -161,11 +169,12 @@ def solve_continuous_osqp(
     build_start = time.perf_counter()
     data = build_continuous_qp(problem, preferences)
     build_seconds = time.perf_counter() - build_start
+    native_tol = _native_osqp_tolerance(tol, data.n_turnover)
     solver = osqp.OSQP()
     settings: dict[str, Any] = {
         "verbose": False,
-        "eps_abs": float(tol),
-        "eps_rel": float(tol),
+        "eps_abs": native_tol,
+        "eps_rel": native_tol,
         "max_iter": int(max_iter),
     }
     setup_start = time.perf_counter()
@@ -192,7 +201,10 @@ def solve_continuous_osqp(
         )
     setup_seconds = time.perf_counter() - setup_start
     solve_start = time.perf_counter()
-    solved = solver.solve(raise_error=False)
+    try:
+        solved = solver.solve(raise_error=False)
+    except TypeError:  # OSQP 0.6 does not expose the raise_error argument.
+        solved = solver.solve()
     solve_seconds = time.perf_counter() - solve_start
     runtime = time.perf_counter() - total_start
     status = str(solved.info.status)
@@ -222,6 +234,8 @@ def solve_continuous_osqp(
             "dual_residual": float(
                 getattr(solved.info, "dual_res", getattr(solved.info, "dua_res", np.nan))
             ),
+            "requested_tolerance": float(tol),
+            "native_tolerance": native_tol,
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,
@@ -444,7 +458,7 @@ def solve_continuous(
 @dataclass
 class MeanVarianceContinuousOptimizer:
     problem: PortfolioProblem
-    preferences: Preferences = Preferences()
+    preferences: Preferences = field(default_factory=Preferences)
     backend: str = "scipy"
 
     def solve(self, **kwargs: Any) -> SolveResult:
