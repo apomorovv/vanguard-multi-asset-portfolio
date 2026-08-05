@@ -164,7 +164,6 @@ def _linear_model(
     add(group, problem.group_lower, problem.group_upper)
 
     identity = sparse.eye(n, format="csr")
-    zero_n = sparse.csr_matrix((n, n))
     extra = sparse.csr_matrix((n, dim - 2 * n))
     
     absolute_plus = sparse.hstack(
@@ -175,6 +174,20 @@ def _linear_model(
     absolute_minus = sparse.hstack(
         (identity, identity, extra),
         format="csr",
+    )
+    
+    # t >= w - w0
+    add(
+        absolute_plus,
+        -problem.w0,
+        np.inf,
+    )
+    
+    # t >= w0 - w
+    add(
+        absolute_minus,
+        problem.w0,
+        np.inf,
     )
 
     if problem.target_return is not None:
@@ -205,7 +218,7 @@ def _linear_model(
         excess = np.zeros((scenario_count, dim))
         excess[:, :n] = constraints.scenario_returns
         excess[:, eta_index] = 1.0
-        excess[:, u_start:] = np.eye(scenario_count)
+        excess[:, u_start:] = sparse.eye(scenario_count)
         add(excess, 0.0, np.inf)
         cvar = np.zeros((1, dim))
         cvar[0, eta_index] = 1.0
@@ -321,6 +334,20 @@ def _solve_extended_scipy(
             "linear_feasibility_status": str(feasible.message),
         },
     )
+    
+    report = validate_weights(
+        result.weights,
+        problem,
+        constraints=constraints,
+    )
+    
+    result.feasible = report.feasible
+    result.breaches = report.breaches
+    result.max_violation = report.max_violation
+    result.success = bool(result.success and report.feasible)
+    result.optimal = bool(result.optimal and report.feasible)
+    result.metadata["constraint_violations"] = report.details
+    
     return result
 
 
