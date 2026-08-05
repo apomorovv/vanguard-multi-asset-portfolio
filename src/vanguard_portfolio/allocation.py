@@ -9,10 +9,11 @@ portfolio without passing :func:`vanguard_portfolio.validation.validate_weights`
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from itertools import combinations
 from math import comb
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 from scipy import sparse
@@ -168,6 +169,21 @@ def _has_extended_rules(constraints: PortfolioConstraints) -> bool:
     )
 
 
+def _requires_extended_solver(
+    constraints: PortfolioConstraints,
+    backend: str,
+) -> bool:
+    """Keep explicit extended-backend aliases valid even without extra rules."""
+
+    return _has_extended_rules(constraints) or backend.strip().lower() in {
+        "clarabel",
+        "clarabel_extended",
+        "cvxpy_clarabel",
+        "gurobi_extended",
+        "osqp_extended",
+    }
+
+
 def _normalise_solver_options(options: dict[str, Any] | None) -> dict[str, Any]:
     normalized = dict(options or {})
     nested = normalized.pop("solver_options", None)
@@ -176,6 +192,19 @@ def _normalise_solver_options(options: dict[str, Any] | None) -> dict[str, Any]:
             raise TypeError("solver_options must be a mapping")
         normalized.update(nested)
     return normalized
+
+
+def _select_solver_options(
+    options: dict[str, Any],
+    accepted: set[str],
+    *,
+    backend: str,
+) -> dict[str, Any]:
+    unknown = sorted(set(options) - accepted)
+    if unknown:
+        names = ", ".join(repr(name) for name in unknown)
+        raise ValueError(f"unsupported {backend} solver option(s): {names}")
+    return {key: options[key] for key in accepted if key in options}
 
 
 def _linear_model(
@@ -402,6 +431,43 @@ def _bound_arrays(
     return lower, upper
 
 
+def _native_feasibility_tolerance(requested: float, n_turnover: int) -> float:
+    """Choose a native tolerance that survives independent weight validation.
+
+    QP solvers control each turnover-epigraph row separately, while the public
+    validator recomputes ``sum(abs(w - w0))``.  Consequently up to ``n`` small
+    row residuals can accumulate in the reported turnover.  Keep that aggregate
+    comfortably below the validator's 1e-7 tolerance without forcing very large
+    problems below a practical 1e-11 native tolerance.
+    """
+
+    value = float(requested)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("tol must be a finite positive number")
+    aggregate_safe = max(1.0e-11, 1.0e-8 / max(1, int(n_turnover)))
+    return min(value, aggregate_safe)
+
+
+def _linear_conic_form(
+    data: ExtendedQPData,
+) -> tuple[sparse.csc_matrix, np.ndarray, np.ndarray, np.ndarray]:
+    """Return equality, upper, and lower rows including variable bounds."""
+
+    variable_lower, variable_upper = _bound_arrays(data.bounds)
+    matrix = sparse.vstack(
+        [data.A, sparse.eye(data.q.size, format="csr")],
+        format="csr",
+    )
+    lower = np.concatenate([data.lower, variable_lower])
+    upper = np.concatenate([data.upper, variable_upper])
+    equality = (
+        np.isfinite(lower)
+        & np.isfinite(upper)
+        & np.isclose(lower, upper, rtol=0.0, atol=1.0e-12)
+    )
+    return matrix.tocsc(), lower, upper, equality
+
+
 def _validated_extended_result(
     *,
     method: str,
@@ -563,18 +629,15 @@ def _solve_extended_osqp(
     start = time.perf_counter()
     build_start = time.perf_counter()
     data = _extended_qp_data(problem, preferences, constraints)
-    variable_lower, variable_upper = _bound_arrays(data.bounds)
-    identity = sparse.eye(data.q.size, format="csr")
-    matrix = sparse.vstack([data.A, identity], format="csc")
-    lower = np.concatenate([data.lower, variable_lower])
-    upper = np.concatenate([data.upper, variable_upper])
+    matrix, lower, upper, _ = _linear_conic_form(data)
+    native_tol = _native_feasibility_tolerance(tol, data.n_turnover)
     build_seconds = time.perf_counter() - build_start
 
     solver = osqp.OSQP()
     settings: dict[str, Any] = {
         "verbose": bool(verbose),
-        "eps_abs": float(tol),
-        "eps_rel": float(tol),
+        "eps_abs": native_tol,
+        "eps_rel": native_tol,
         "max_iter": int(max_iter),
     }
     setup_start = time.perf_counter()
@@ -602,7 +665,10 @@ def _solve_extended_osqp(
     setup_seconds = time.perf_counter() - setup_start
 
     solve_start = time.perf_counter()
-    solved = solver.solve(raise_error=False)
+    try:
+        solved = solver.solve(raise_error=False)
+    except TypeError:  # OSQP 0.6 does not expose the raise_error argument.
+        solved = solver.solve()
     solve_seconds = time.perf_counter() - solve_start
     status = str(solved.info.status)
     success = status.lower().startswith("solved") and solved.x is not None
@@ -631,12 +697,134 @@ def _solve_extended_osqp(
             "dual_residual": float(
                 getattr(solved.info, "dual_res", getattr(solved.info, "dua_res", np.nan))
             ),
+            "requested_tolerance": float(tol),
+            "native_tolerance": native_tol,
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,
             "matrix_rows": matrix.shape[0],
             "matrix_columns": matrix.shape[1],
             "matrix_nonzeros": matrix.nnz,
+            "cvar_scenarios": data.n_scenarios,
+        },
+    )
+
+
+def _solve_extended_clarabel(
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    constraints: PortfolioConstraints,
+    *,
+    tol: float = 1e-8,
+    max_iter: int = 100_000,
+    verbose: bool = False,
+    solver_options: dict[str, Any] | None = None,
+) -> SolveResult:
+    """Solve the sparse extended QP directly through Clarabel's Python API."""
+
+    try:
+        import clarabel
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SolverUnavailableError(
+            "Clarabel is not installed; install the 'qp' extra"
+        ) from exc
+
+    start = time.perf_counter()
+    build_start = time.perf_counter()
+    data = _extended_qp_data(problem, preferences, constraints)
+    matrix, lower, upper, equality = _linear_conic_form(data)
+    finite_upper = np.isfinite(upper) & ~equality
+    finite_lower = np.isfinite(lower) & ~equality
+
+    blocks: list[sparse.spmatrix] = []
+    right_hand_sides: list[np.ndarray] = []
+    cones: list[Any] = []
+    if np.any(equality):
+        blocks.append(matrix[equality])
+        right_hand_sides.append(lower[equality])
+        cones.append(clarabel.ZeroConeT(int(np.count_nonzero(equality))))
+    if np.any(finite_upper):
+        blocks.append(matrix[finite_upper])
+        right_hand_sides.append(upper[finite_upper])
+        cones.append(clarabel.NonnegativeConeT(int(np.count_nonzero(finite_upper))))
+    if np.any(finite_lower):
+        blocks.append(-matrix[finite_lower])
+        right_hand_sides.append(-lower[finite_lower])
+        cones.append(clarabel.NonnegativeConeT(int(np.count_nonzero(finite_lower))))
+
+    conic_matrix = sparse.vstack(blocks, format="csc")
+    conic_rhs = np.concatenate(right_hand_sides)
+    native_tol = _native_feasibility_tolerance(tol, data.n_turnover)
+    settings = clarabel.DefaultSettings()
+    settings.verbose = bool(verbose)
+    settings.max_iter = int(max_iter)
+    settings.tol_feas = native_tol
+    settings.tol_gap_abs = native_tol
+    settings.tol_gap_rel = native_tol
+    for key, value in dict(solver_options or {}).items():
+        if key in {"verbose", "max_iter", "tol_feas", "tol_gap_abs", "tol_gap_rel"}:
+            raise ValueError(
+                f"Clarabel option {key!r} must be supplied through tol, max_iter, or verbose"
+            )
+        if not hasattr(settings, key):
+            raise ValueError(f"unknown Clarabel setting {key!r}")
+        setattr(settings, key, value)
+    build_seconds = time.perf_counter() - build_start
+
+    setup_start = time.perf_counter()
+    try:
+        solver = clarabel.DefaultSolver(
+            sparse.triu(data.P, format="csc"),
+            data.q,
+            conic_matrix,
+            conic_rhs,
+            cones,
+            settings,
+        )
+    except (RuntimeError, ValueError) as exc:  # pragma: no cover - solver-specific
+        raise PortfolioError(f"Clarabel could not build the extended QP: {exc}") from exc
+    setup_seconds = time.perf_counter() - setup_start
+
+    solve_start = time.perf_counter()
+    try:
+        solved = solver.solve()
+    except RuntimeError as exc:  # pragma: no cover - solver-specific
+        raise PortfolioError(f"Clarabel could not solve the extended QP: {exc}") from exc
+    solve_seconds = time.perf_counter() - solve_start
+    status = str(solved.status)
+    success = status in {"Solved", "AlmostSolved"} and solved.x is not None
+    weights = (
+        np.asarray(solved.x[: problem.n], dtype=float)
+        if success
+        else np.full(problem.n, np.nan)
+    )
+    return _validated_extended_result(
+        method="clarabel_extended_qp",
+        weights=weights,
+        problem=problem,
+        preferences=preferences,
+        constraints=constraints,
+        runtime=time.perf_counter() - start,
+        status=status,
+        success=success,
+        optimal=status == "Solved",
+        metadata={
+            "iterations": int(getattr(solved, "iterations", 0)),
+            "native_objective": float(getattr(solved, "obj_val", np.nan)),
+            "native_dual_objective": float(
+                getattr(solved, "obj_val_dual", np.nan)
+            ),
+            "solver_runtime": float(getattr(solved, "solve_time", np.nan)),
+            "primal_residual": float(getattr(solved, "r_prim", np.nan)),
+            "dual_residual": float(getattr(solved, "r_dual", np.nan)),
+            "requested_tolerance": float(tol),
+            "native_tolerance": native_tol,
+            "model_build_seconds": build_seconds,
+            "solver_setup_seconds": setup_seconds,
+            "solve_seconds": solve_seconds,
+            "matrix_rows": conic_matrix.shape[0],
+            "matrix_columns": conic_matrix.shape[1],
+            "matrix_nonzeros": conic_matrix.nnz,
             "cvar_scenarios": data.n_scenarios,
         },
     )
@@ -733,6 +921,138 @@ def _solve_extended_cvxpy(
     )
 
 
+def _solve_extended_gurobi(
+    problem: PortfolioProblem,
+    preferences: Preferences,
+    constraints: PortfolioConstraints,
+    *,
+    tol: float = 1e-8,
+    time_limit: float | None = None,
+    threads: int | None = None,
+    seed: int | None = None,
+    method: int | None = None,
+    bar_conv_tol: float | None = None,
+    numeric_focus: int | None = None,
+    output: bool = False,
+) -> SolveResult:
+    """Solve the sparse extended QP directly through optional Gurobi."""
+
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SolverUnavailableError(
+            "gurobipy is not installed; install the 'gurobi' extra"
+        ) from exc
+
+    start = time.perf_counter()
+    try:
+        data = _extended_qp_data(problem, preferences, constraints)
+        variable_lower, variable_upper = _bound_arrays(data.bounds)
+        variable_lower = np.where(np.isfinite(variable_lower), variable_lower, -GRB.INFINITY)
+        variable_upper = np.where(np.isfinite(variable_upper), variable_upper, GRB.INFINITY)
+        native_tol = max(1.0e-9, _native_feasibility_tolerance(tol, data.n_turnover))
+
+        model = gp.Model("vanguard_extended_allocation")
+        model.Params.OutputFlag = int(output)
+        model.Params.FeasibilityTol = native_tol
+        model.Params.OptimalityTol = native_tol
+        if time_limit is not None:
+            model.Params.TimeLimit = float(time_limit)
+        if threads is not None:
+            model.Params.Threads = int(threads)
+        if seed is not None:
+            model.Params.Seed = int(seed)
+        if method is not None:
+            model.Params.Method = int(method)
+        if bar_conv_tol is not None:
+            model.Params.BarConvTol = float(bar_conv_tol)
+        if numeric_focus is not None:
+            model.Params.NumericFocus = int(numeric_focus)
+
+        x = model.addMVar(
+            data.q.size,
+            lb=variable_lower,
+            ub=variable_upper,
+            name="extended_allocation",
+        )
+        equality = (
+            np.isfinite(data.lower)
+            & np.isfinite(data.upper)
+            & np.isclose(data.lower, data.upper, rtol=0.0, atol=1.0e-12)
+        )
+        finite_lower = np.isfinite(data.lower) & ~equality
+        finite_upper = np.isfinite(data.upper) & ~equality
+        if np.any(equality):
+            model.addMConstr(data.A[equality], x, "=", data.lower[equality], name="equal")
+        if np.any(finite_lower):
+            model.addMConstr(
+                data.A[finite_lower],
+                x,
+                ">",
+                data.lower[finite_lower],
+                name="lower",
+            )
+        if np.any(finite_upper):
+            model.addMConstr(
+                data.A[finite_upper],
+                x,
+                "<",
+                data.upper[finite_upper],
+                name="upper",
+            )
+        model.setObjective(
+            0.5 * (x @ data.P @ x) + data.q @ x,
+            GRB.MINIMIZE,
+        )
+        build_seconds = time.perf_counter() - start
+
+        solve_start = time.perf_counter()
+        model.optimize()
+        solve_seconds = time.perf_counter() - solve_start
+    except gp.GurobiError as exc:  # license and environment failures land here
+        raise SolverUnavailableError(f"Gurobi could not start or solve: {exc}") from exc
+
+    success = model.SolCount > 0
+    optimal = model.Status == GRB.OPTIMAL
+    weights = np.asarray(x.X[: problem.n]) if success else np.full(problem.n, np.nan)
+    status_names = {
+        GRB.OPTIMAL: "optimal",
+        GRB.INFEASIBLE: "infeasible",
+        GRB.INF_OR_UNBD: "infeasible_or_unbounded",
+        GRB.TIME_LIMIT: "time_limit",
+        GRB.SUBOPTIMAL: "suboptimal",
+        GRB.ITERATION_LIMIT: "iteration_limit",
+    }
+    metadata: dict[str, Any] = {
+        "native_objective": float(model.ObjVal) if success else None,
+        "solver_runtime": float(model.Runtime),
+        "iterations": float(model.IterCount),
+        "requested_tolerance": float(tol),
+        "native_tolerance": native_tol,
+        "model_build_seconds": build_seconds,
+        "solve_seconds": solve_seconds,
+        "matrix_rows": data.A.shape[0],
+        "matrix_columns": data.A.shape[1],
+        "matrix_nonzeros": data.A.nnz,
+        "cvar_scenarios": data.n_scenarios,
+    }
+    if success:
+        metadata["best_bound"] = float(model.ObjBound)
+    return _validated_extended_result(
+        method="gurobi_extended_qp",
+        weights=weights,
+        problem=problem,
+        preferences=preferences,
+        constraints=constraints,
+        runtime=time.perf_counter() - start,
+        status=status_names.get(model.Status, f"status_{model.Status}"),
+        success=success,
+        optimal=optimal,
+        metadata=metadata,
+    )
+
+
 def _solve_extended(
     problem: PortfolioProblem,
     preferences: Preferences,
@@ -746,18 +1066,36 @@ def _solve_extended(
     options = _normalise_solver_options(solver_options)
 
     if lower_name in {"scipy", "slsqp", "scipy_slsqp"}:
-        accepted = {key: value for key, value in options.items() if key in {"tol", "max_iter"}}
+        accepted = _select_solver_options(
+            options,
+            {"tol", "max_iter"},
+            backend="SciPy",
+        )
         return _solve_extended_scipy(problem, preferences, constraints, **accepted)
 
     if lower_name in {"osqp", "osqp_extended"}:
-        accepted = {
-            key: value
-            for key, value in options.items()
-            if key in {"tol", "max_iter", "polish", "verbose"}
-        }
+        accepted = _select_solver_options(
+            options,
+            {"tol", "max_iter", "polish", "verbose"},
+            backend="OSQP",
+        )
         return _solve_extended_osqp(problem, preferences, constraints, **accepted)
 
-    if lower_name in {"clarabel", "cvxpy:clarabel", "cvxpy_clarabel"}:
+    if lower_name in {"clarabel", "clarabel_extended"}:
+        tol = float(options.pop("tol", 1e-8))
+        max_iter = int(options.pop("max_iter", 100_000))
+        verbose = bool(options.pop("verbose", False))
+        return _solve_extended_clarabel(
+            problem,
+            preferences,
+            constraints,
+            tol=tol,
+            max_iter=max_iter,
+            verbose=verbose,
+            solver_options=options,
+        )
+
+    if lower_name == "cvxpy_clarabel":
         tol = float(options.pop("tol", 1e-8))
         max_iter = int(options.pop("max_iter", 100_000))
         return _solve_extended_cvxpy(
@@ -769,6 +1107,23 @@ def _solve_extended(
             max_iter=max_iter,
             solver_options=options,
         )
+
+    if lower_name in {"gurobi", "gurobi_extended"}:
+        accepted = _select_solver_options(
+            options,
+            {
+                "tol",
+                "time_limit",
+                "threads",
+                "seed",
+                "method",
+                "bar_conv_tol",
+                "numeric_focus",
+                "output",
+            },
+            backend="Gurobi",
+        )
+        return _solve_extended_gurobi(problem, preferences, constraints, **accepted)
 
     if lower_name.startswith("cvxpy:"):
         solver_name = name.split(":", 1)[1]
@@ -786,7 +1141,7 @@ def _solve_extended(
 
     raise ValueError(
         "extended allocation backend must be one of "
-        "'scipy', 'osqp', 'clarabel', or 'cvxpy:<solver>'"
+        "'scipy', 'osqp', 'clarabel', 'gurobi', or 'cvxpy:<solver>'"
     )
 
 
@@ -817,7 +1172,7 @@ class AllocationOracle:
             restricted, reduced_constraints, selected = _support_problem(
                 self.problem, self.constraints, support_tuple
             )
-            if _has_extended_rules(reduced_constraints):
+            if _requires_extended_solver(reduced_constraints, self.backend):
                 reduced_result = _solve_extended(
                     restricted,
                     self.preferences,
@@ -928,7 +1283,7 @@ def solve_relaxation(
         minimum_active_weight=0.0,
         mandatory_assets=(),
     )
-    if _has_extended_rules(relaxed_rules):
+    if _requires_extended_solver(relaxed_rules, backend):
         result = _solve_extended(
             relaxed_problem,
             preferences,
