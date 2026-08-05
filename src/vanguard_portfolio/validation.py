@@ -26,6 +26,7 @@ class ConstraintReport:
     breaches: int
     max_violation: float
     checks: list[ConstraintCheck] = field(default_factory=list)
+    tolerance: float = 0.0
 
     @property
     def details(self) -> list[str]:
@@ -33,7 +34,7 @@ class ConstraintReport:
             f"{check.name}: {check.lhs:.8g} {check.sense} {check.rhs:.8g} "
             f"(violation={check.violation:.3e})"
             for check in self.checks
-            if check.violation > 0.0
+            if check.violation > self.tolerance
         ]
 
 
@@ -47,9 +48,15 @@ def validate_weights(
     tol: float = 1e-7,
 ) -> ConstraintReport:
     """Check every hard constraint without modifying the candidate weights."""
+    tol = float(tol)
+    support_tol = float(support_tol)
+    if not np.isfinite(tol) or tol < 0.0:
+        raise ValueError("tol must be finite and nonnegative")
+    if not np.isfinite(support_tol) or support_tol < 0.0:
+        raise ValueError("support_tol must be finite and nonnegative")
     w = np.asarray(weights, dtype=float).reshape(-1)
     if w.shape != (problem.n,) or not np.all(np.isfinite(w)):
-        return ConstraintReport(False, 1, np.inf, [])
+        return ConstraintReport(False, 1, np.inf, [], tol)
 
     checks: list[ConstraintCheck] = []
 
@@ -155,6 +162,7 @@ def validate_weights(
         breaches=breaches,
         max_violation=float(max(violations, default=0.0)),
         checks=checks,
+        tolerance=tol,
     )
 
 
