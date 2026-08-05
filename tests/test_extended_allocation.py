@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
-from vanguard_portfolio.allocation import _linear_model, solve_relaxation
+from vanguard_portfolio.allocation import (
+    AllocationOracle,
+    _linear_model,
+    solve_relaxation,
+)
 from vanguard_portfolio.data_generation import (
     generate_factor_universe,
     generate_return_scenarios,
@@ -69,7 +74,7 @@ class ExtendedAllocationTests(unittest.TestCase):
         self.assertEqual(matrix.shape[1], 2 * problem.n + problem.num_factors + 1 + 2_000)
         self.assertLess(matrix.nnz, 2_000 * (problem.n + 5) + 20_000)
 
-    def test_osqp_extended_relaxation_passes_independent_validation(self) -> None:
+    def test_osqp_extended_relaxation_passes_relaxed_validation(self) -> None:
         problem, constraints = build_extended_case(scenario_count=250)
         try:
             result = solve_relaxation(
@@ -82,11 +87,48 @@ class ExtendedAllocationTests(unittest.TestCase):
         except SolverUnavailableError as exc:
             self.skipTest(str(exc))
 
-        report = validate_weights(result.weights, problem, constraints=constraints)
+        # A continuous relaxation deliberately removes exact cardinality and
+        # minimum-active-weight requirements. Validate it against the same
+        # relaxed rule set rather than incorrectly requiring exactly 12 assets.
+        relaxed_constraints = replace(
+            constraints,
+            exact_cardinality=None,
+            minimum_active_weight=0.0,
+            mandatory_assets=(),
+        )
+        report = validate_weights(
+            result.weights,
+            problem,
+            constraints=relaxed_constraints,
+        )
+
         self.assertTrue(result.success, result.metadata)
         self.assertTrue(report.feasible, report.details)
         self.assertEqual(result.method, "osqp_extended_qp")
         self.assertEqual(result.metadata["cvar_scenarios"], 250)
+
+    def test_osqp_fixed_support_enforces_full_sparse_constraints(self) -> None:
+        problem, constraints = build_extended_case(scenario_count=250)
+        try:
+            oracle = AllocationOracle(
+                problem,
+                Preferences(lambda_income=0.5),
+                constraints,
+                backend="osqp",
+                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+            )
+            support = tuple(np.flatnonzero(problem.w0 > 1.0e-12).tolist())
+            evaluated = oracle.evaluate(support)
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+
+        self.assertTrue(evaluated.feasible, evaluated.reason)
+        self.assertIsNotNone(evaluated.result)
+        self.assertIsNotNone(evaluated.report)
+        self.assertTrue(evaluated.report.feasible, evaluated.report.details)
+        self.assertEqual(len(evaluated.support), constraints.exact_cardinality)
+        self.assertEqual(evaluated.result.method, "osqp_extended_qp")
+        self.assertEqual(evaluated.result.breaches, 0)
 
     def test_clarabel_extended_relaxation_matches_osqp(self) -> None:
         problem, constraints = build_extended_case(scenario_count=100)
