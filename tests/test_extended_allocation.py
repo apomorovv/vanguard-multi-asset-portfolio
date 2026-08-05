@@ -153,7 +153,83 @@ class ExtendedAllocationTests(unittest.TestCase):
 
         self.assertTrue(osqp_result.success, osqp_result.metadata)
         self.assertTrue(clarabel_result.success, clarabel_result.metadata)
+        self.assertEqual(clarabel_result.method, "clarabel_extended_qp")
+        self.assertEqual(clarabel_result.metadata["cvar_scenarios"], 100)
         self.assertLessEqual(abs(osqp_result.objective - clarabel_result.objective), 5.0e-6)
+
+    def test_gurobi_extended_relaxation_matches_osqp_when_available(self) -> None:
+        # Keep this below the size limit of Gurobi's restricted test license.
+        problem, constraints = build_extended_case(scenario_count=20)
+        preferences = Preferences(lambda_income=0.5)
+        try:
+            osqp_result = solve_relaxation(
+                problem,
+                preferences,
+                constraints,
+                backend="osqp",
+                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+            )
+            gurobi_result = solve_relaxation(
+                problem,
+                preferences,
+                constraints,
+                backend="gurobi",
+                solver_options={"tol": 1.0e-8, "output": False},
+            )
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+
+        relaxed_constraints = replace(
+            constraints,
+            exact_cardinality=None,
+            minimum_active_weight=0.0,
+            mandatory_assets=(),
+        )
+        report = validate_weights(
+            gurobi_result.weights,
+            problem,
+            constraints=relaxed_constraints,
+        )
+        self.assertTrue(gurobi_result.success, gurobi_result.metadata)
+        self.assertTrue(report.feasible, report.details)
+        self.assertEqual(gurobi_result.method, "gurobi_extended_qp")
+        self.assertLessEqual(abs(osqp_result.objective - gurobi_result.objective), 5.0e-6)
+
+    def test_empty_cvar_scenario_set_is_rejected(self) -> None:
+        problem, constraints = build_extended_case(scenario_count=20)
+        empty = replace(constraints, scenario_returns=np.empty((0, problem.n)))
+        with self.assertRaisesRegex(ValueError, "at least one return scenario"):
+            solve_relaxation(problem, Preferences(), empty, backend="scipy")
+
+    def test_unknown_osqp_option_is_rejected(self) -> None:
+        problem, constraints = build_extended_case(scenario_count=20)
+        with self.assertRaisesRegex(ValueError, "unsupported OSQP solver option"):
+            solve_relaxation(
+                problem,
+                Preferences(),
+                constraints,
+                backend="osqp",
+                solver_options={"misspelled_tolerance": 1.0e-8},
+            )
+
+    def test_clarabel_alias_works_without_extended_rules(self) -> None:
+        problem, _ = build_extended_case(scenario_count=20)
+        basic_constraints = PortfolioConstraints(
+            exact_cardinality=12,
+            minimum_active_weight=0.01,
+        )
+        try:
+            result = solve_relaxation(
+                problem,
+                Preferences(),
+                basic_constraints,
+                backend="clarabel",
+            )
+        except SolverUnavailableError as exc:
+            self.skipTest(str(exc))
+
+        self.assertTrue(result.success, result.metadata)
+        self.assertEqual(result.method, "clarabel_extended_qp")
 
 
 if __name__ == "__main__":
