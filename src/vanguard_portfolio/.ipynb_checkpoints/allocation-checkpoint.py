@@ -163,19 +163,14 @@ def _linear_model(
     group[:, :n] = problem.A
     add(group, problem.group_lower, problem.group_upper)
 
-    identity = sparse.eye(n, format="csr")
-    zero_n = sparse.csr_matrix((n, n))
-    extra = sparse.csr_matrix((n, dim - 2 * n))
-    
-    absolute_plus = sparse.hstack(
-        (-identity, identity, extra),
-        format="csr",
-    )
-    
-    absolute_minus = sparse.hstack(
-        (identity, identity, extra),
-        format="csr",
-    )
+    absolute_plus = np.zeros((n, dim))
+    absolute_plus[:, :n] = -np.eye(n)
+    absolute_plus[:, n : 2 * n] = np.eye(n)
+    add(absolute_plus, -problem.w0, np.inf)
+    absolute_minus = np.zeros((n, dim))
+    absolute_minus[:, :n] = np.eye(n)
+    absolute_minus[:, n : 2 * n] = np.eye(n)
+    add(absolute_minus, problem.w0, np.inf)
 
     if problem.target_return is not None:
         row = np.zeros((1, dim))
@@ -682,16 +677,6 @@ def find_feasible_initial_support(
     if constraints.exact_cardinality is None:
         raise ValueError("hybrid support construction requires exact_cardinality")
     k = constraints.exact_cardinality
-    current_support = tuple(
-        np.flatnonzero(oracle.problem.w0 > 1.0e-12).tolist()
-    )
-    
-    if len(current_support) == k:
-        current = oracle.evaluate(current_support)
-        if current.feasible:
-            if current.result is not None:
-                current.result.metadata["initialization"] = "current_valid_support"
-            return current
     eligible = np.flatnonzero(constraints.eligible_mask(oracle.problem.n))
     mandatory = set(constraints.mandatory_assets) | set(
         np.flatnonzero(oracle.problem.lower > 1e-12).tolist()
