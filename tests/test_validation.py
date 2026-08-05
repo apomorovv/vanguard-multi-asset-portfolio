@@ -30,6 +30,18 @@ class ValidationTests(unittest.TestCase):
             )
         )
 
+    def test_details_only_include_tolerance_breaches(self) -> None:
+        weights = self.problem.w0.copy()
+        weights[0] += 5.0e-8
+        report = validate_weights(weights, self.problem, tol=1.0e-7)
+        self.assertTrue(report.feasible)
+        self.assertGreater(report.max_violation, 0.0)
+        self.assertEqual(report.details, [])
+
+    def test_negative_validation_tolerance_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "tol must be finite and nonnegative"):
+            validate_weights(self.problem.w0, self.problem, tol=-1.0)
+
     def test_asset_and_group_violations_are_reported_separately(self) -> None:
         weights = np.array([0.8, 0.0, 0.0, 0.0, 0.0, 0.2])
         report = validate_weights(weights, self.problem)
