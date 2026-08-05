@@ -7,8 +7,9 @@ instead of maintaining solver-specific copies.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -393,7 +394,7 @@ class PortfolioProblem:
         return result
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "PortfolioProblem":
+    def from_dict(cls, data: Mapping[str, Any]) -> PortfolioProblem:
         return cls(**dict(data))
 
 
@@ -491,7 +492,7 @@ class PortfolioConstraints:
                     raise ValueError(f"{name} contains non-finite values")
                 object.__setattr__(self, name, array.copy())
 
-    def validate_for(self, problem: PortfolioProblem) -> "PortfolioConstraints":
+    def validate_for(self, problem: PortfolioProblem) -> PortfolioConstraints:
         n = problem.n
         eligible = set(range(n)) if self.eligible_assets is None else set(self.eligible_assets)
         mandatory = set(self.mandatory_assets)
@@ -535,6 +536,8 @@ class PortfolioConstraints:
                 raise ValueError("maximum_cvar requires scenario_returns")
             if self.scenario_returns.ndim != 2 or self.scenario_returns.shape[1] != n:
                 raise ValueError("scenario_returns must have shape (n_scenarios, n_assets)")
+            if self.scenario_returns.shape[0] == 0:
+                raise ValueError("maximum_cvar requires at least one return scenario")
         elif self.scenario_returns is not None and (
             self.scenario_returns.ndim != 2 or self.scenario_returns.shape[1] != n
         ):
@@ -574,7 +577,7 @@ class PortfolioConstraints:
         return result
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any] | None) -> "PortfolioConstraints":
+    def from_dict(cls, data: Mapping[str, Any] | None) -> PortfolioConstraints:
         return cls() if data is None else cls(**dict(data))
 
 
