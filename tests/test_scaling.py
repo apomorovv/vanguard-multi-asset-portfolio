@@ -29,7 +29,8 @@ class ScalingScriptTests(unittest.TestCase):
         self.assertEqual(args.window_size, 16)
         self.assertEqual(args.relaxation_tolerance, 1e-8)
         self.assertEqual(args.allocation_tolerance, 1e-8)
-        self.assertEqual(args.case_time_limit, 360.0)
+        self.assertEqual(args.relaxation_time_limit, 30.0)
+        self.assertEqual(args.case_time_limit, 180.0)
         self.assertTrue(args.relaxation_fallback)
 
     def test_summary_reports_medians_and_zero_breach_rate(self) -> None:

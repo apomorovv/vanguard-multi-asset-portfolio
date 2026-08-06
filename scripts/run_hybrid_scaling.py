@@ -795,7 +795,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--relaxation-time-limit",
         type=float,
-        default=300.0,
+        default=30.0,
         help="native solver limit for the guide relaxation, in seconds",
     )
     parser.add_argument(
@@ -848,7 +848,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--case-time-limit",
         type=float,
-        default=360.0,
+        default=180.0,
         help="hard wall-clock limit for each isolated worker process",
     )
     parser.add_argument("--output", type=Path, default=ROOT / "results/hybrid_scaling")
