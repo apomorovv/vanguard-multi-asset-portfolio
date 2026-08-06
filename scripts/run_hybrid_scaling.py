@@ -1249,21 +1249,19 @@ def _plots(
         created.append(path)
     plt.close(fig)
 
-    early_presentation_rows = [
-        row for row in representative_rows if int(row["n_assets"]) <= 2_000
-    ]
-    presentation_rows = (
-        early_presentation_rows
-        if len(early_presentation_rows) >= 2
-        else representative_rows
+    presentation_rows = sorted(
+        representative_rows,
+        key=lambda row: int(row["n_assets"]),
     )
-    if len(presentation_rows) > 6:
-        selected_indices = np.unique(
-            np.rint(np.linspace(0, len(presentation_rows) - 1, 6)).astype(int)
-        )
-        presentation_rows = [presentation_rows[index] for index in selected_indices]
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.6, 5.0))
+    figure_width = max(13.6, 8.0 + 0.85 * len(presentation_rows))
+
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(figure_width, 5.4),
+        gridspec_kw={"width_ratios": [1.15, 1.35]},
+    )
     _median_band(
         axes[0],
         summary,
@@ -1317,7 +1315,13 @@ def _plots(
         for row in presentation_rows
     ]
     axes[1].set_xticks(presentation_positions)
-    axes[1].set_xticklabels(presentation_labels, rotation=25, ha="right")
+    axes[1].set_xticklabels(
+    presentation_labels,
+    rotation=45,
+    ha="right",
+    rotation_mode="anchor",
+    fontsize=8,
+    )
     axes[1].set_xlabel("Global asset universe size")
     axes[1].set_ylabel("Wall-clock seconds")
     runtime_title = "Where the runtime is spent"
