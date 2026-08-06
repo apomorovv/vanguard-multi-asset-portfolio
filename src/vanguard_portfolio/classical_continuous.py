@@ -23,6 +23,7 @@ from .schemas import (
     SolveResult,
     SolverUnavailableError,
 )
+from .validation import validate_weights
 
 
 def _validated_tolerance(requested: float) -> float:
@@ -37,6 +38,42 @@ def _validated_tolerance(requested: float) -> float:
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError("tol must be a finite positive number")
     return value
+
+
+def _repair_turnover_residual(
+    weights: np.ndarray,
+    problem: PortfolioProblem,
+) -> tuple[np.ndarray, dict[str, float | bool]]:
+    """Remove accumulated epigraph residual without changing the model tolerance.
+
+    OSQP controls each ``|w_i-w_i0| <= t_i`` row independently.  Across tens of
+    thousands of assets, tiny accepted row residuals can make the recomputed
+    turnover exceed its cap even when the native QP reports ``solved``.  When
+    the incumbent portfolio is itself feasible, a convex contraction toward it
+    preserves every convex hard constraint and removes that numerical excess.
+    """
+
+    metadata: dict[str, float | bool] = {"turnover_repair_applied": False}
+    if problem.max_turnover is None or not np.all(np.isfinite(weights)):
+        return weights, metadata
+    measured = float(np.sum(np.abs(weights - problem.w0)))
+    metadata["turnover_before_repair"] = measured
+    limit = float(problem.max_turnover)
+    if measured <= limit or measured <= 0.0:
+        metadata["turnover_after_repair"] = measured
+        return weights, metadata
+    if not validate_weights(problem.w0, problem).feasible:
+        metadata["turnover_after_repair"] = measured
+        return weights, metadata
+    target = np.nextafter(limit, 0.0)
+    repaired = problem.w0 + (target / measured) * (weights - problem.w0)
+    metadata.update(
+        {
+            "turnover_repair_applied": True,
+            "turnover_after_repair": float(np.sum(np.abs(repaired - problem.w0))),
+        }
+    )
+    return repaired, metadata
 
 
 def _linear_program_start(problem: PortfolioProblem, data: QPData) -> np.ndarray:
@@ -164,6 +201,8 @@ def solve_continuous_osqp(
     tol: float = 1e-8,
     max_iter: int = 100_000,
     time_limit: float | None = None,
+    polish: bool = True,
+    warm_start: bool = True,
 ) -> SolveResult:
     """Solve the matrix-form QP with the optional open-source OSQP backend."""
     try:
@@ -198,7 +237,7 @@ def solve_continuous_osqp(
             A=data.A,
             l=data.lower,
             u=data.upper,
-            polishing=True,
+            polishing=bool(polish),
             **settings,
         )
     except (TypeError, ValueError):  # OSQP 0.6 uses the older setting name.
@@ -209,10 +248,24 @@ def solve_continuous_osqp(
             A=data.A,
             l=data.lower,
             u=data.upper,
-            polish=True,
+            polish=bool(polish),
             **settings,
         )
     setup_seconds = time.perf_counter() - setup_start
+    warm_started = False
+    if warm_start:
+        weights = np.asarray(problem.w0, dtype=float)
+        factor_exposure = (
+            problem.factor_loadings.T @ weights
+            if problem.has_factor_model
+            else np.empty(0, dtype=float)
+        )
+        initial = np.concatenate(
+            [weights, np.abs(weights - problem.w0), factor_exposure]
+        )
+        if initial.shape == data.q.shape and np.all(np.isfinite(initial)):
+            solver.warm_start(x=initial)
+            warm_started = True
     solve_start = time.perf_counter()
     try:
         solved = solver.solve(raise_error=False)
@@ -221,12 +274,20 @@ def solve_continuous_osqp(
     solve_seconds = time.perf_counter() - solve_start
     runtime = time.perf_counter() - total_start
     status = str(solved.info.status)
-    success = status.lower().startswith("solved") and solved.x is not None
+    has_primal_iterate = (
+        solved.x is not None
+        and np.asarray(solved.x).size >= problem.n
+        and np.all(np.isfinite(np.asarray(solved.x)[: problem.n]))
+    )
+    success = status.lower().startswith("solved") and has_primal_iterate
     weights = (
         np.asarray(solved.x[: problem.n], dtype=float)
-        if success
+        if has_primal_iterate
         else np.full(problem.n, np.nan)
     )
+    turnover_metadata: dict[str, float | bool] = {}
+    if success:
+        weights, turnover_metadata = _repair_turnover_residual(weights, problem)
     return make_result(
         method="osqp",
         model_type="continuous",
@@ -251,6 +312,10 @@ def solve_continuous_osqp(
             "requested_tolerance": float(tol),
             "native_tolerance": native_tol,
             "time_limit": None if time_limit is None else float(time_limit),
+            "polish": bool(polish),
+            "warm_started": warm_started,
+            "has_primal_iterate": has_primal_iterate,
+            **turnover_metadata,
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,

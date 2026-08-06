@@ -73,6 +73,7 @@ RUN_COLUMNS = (
     "best_objective",
     "hybrid_objective",
     "relaxation_objective",
+    "relaxation_guide_objective",
     "relative_gap_to_relaxation",
     "gurobi_objective",
     "gurobi_best_bound",
@@ -90,6 +91,10 @@ RUN_COLUMNS = (
     "relaxation_dual_residual",
     "relaxation_rho_updates",
     "relaxation_status",
+    "relaxation_accepted",
+    "relaxation_bound_available",
+    "relaxation_fallback_used",
+    "relaxation_guide_source",
     "initialization_seconds",
     "classical_window_seconds",
     "quantum_window_seconds",
@@ -97,6 +102,7 @@ RUN_COLUMNS = (
     "gurobi_seconds",
     "search_end_to_end_seconds",
     "full_end_to_end_seconds",
+    "worker_wall_seconds",
     "oracle_calls",
     "oracle_cache_hits",
     "peak_rss_gib",
@@ -203,6 +209,13 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         top_candidates=int(spec["quantum_top_candidates"]),
         transpile_optimization_level=int(spec["transpile_optimization_level"]),
     )
+    relaxation_options: dict[str, Any] = {
+        "tol": float(spec["relaxation_tolerance"]),
+        "max_iter": int(spec["relaxation_max_iter"]),
+        "time_limit": float(spec["relaxation_time_limit"]),
+    }
+    if str(spec["allocation_backend"]).strip().lower() == "osqp":
+        relaxation_options["polish"] = False
     config = HybridConfig(
         iterations=int(spec["iterations"]),
         window_size=min(int(spec["window_size"]), size),
@@ -211,11 +224,8 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
             "tol": float(spec["allocation_tolerance"]),
             "max_iter": int(spec["allocation_max_iter"]),
         },
-        relaxation_options={
-            "tol": float(spec["relaxation_tolerance"]),
-            "max_iter": int(spec["relaxation_max_iter"]),
-            "time_limit": float(spec["relaxation_time_limit"]),
-        },
+        relaxation_options=relaxation_options,
+        allow_relaxation_fallback=bool(spec["relaxation_fallback"]),
         initial_trials=int(spec["initial_trials"]),
         initial_milp_time_limit=float(spec["initial_milp_time_limit"]),
         classical_tabu_iterations=int(spec["classical_tabu_iterations"]),
@@ -256,6 +266,9 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     search_solver_seconds = max(float(run.runtime) - gurobi_seconds, 0.0)
     relaxation_seconds = float(run.relaxation.runtime)
     relaxation_metadata = run.relaxation.metadata
+    relaxation_accepted = bool(run.relaxation.success)
+    relaxation_bound_available = bool(run.relaxation.success and run.relaxation.optimal)
+    relaxation_fallback_used = bool(relaxation_metadata.get("fallback_used", False))
     time_to_valid = float(run.timeline[0]["elapsed_seconds"])
     initialization_seconds = max(time_to_valid - relaxation_seconds, 0.0)
     classical_seconds = sum(
@@ -313,10 +326,14 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "best_method": run.best.method,
         "best_objective": run.best.objective,
         "hybrid_objective": hybrid_best.objective,
-        "relaxation_objective": run.relaxation.objective,
-        "relative_gap_to_relaxation": _relative_gap(
-            hybrid_best.objective,
-            run.relaxation.objective,
+        "relaxation_objective": (
+            run.relaxation.objective if relaxation_bound_available else ""
+        ),
+        "relaxation_guide_objective": run.relaxation.objective,
+        "relative_gap_to_relaxation": (
+            _relative_gap(hybrid_best.objective, run.relaxation.objective)
+            if relaxation_bound_available
+            else ""
         ),
         "gurobi_objective": "" if gurobi is None else gurobi.objective,
         "gurobi_best_bound": best_bound,
@@ -340,6 +357,10 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "relaxation_dual_residual": relaxation_metadata.get("dual_residual", ""),
         "relaxation_rho_updates": relaxation_metadata.get("rho_updates", ""),
         "relaxation_status": run.relaxation.status,
+        "relaxation_accepted": relaxation_accepted,
+        "relaxation_bound_available": relaxation_bound_available,
+        "relaxation_fallback_used": relaxation_fallback_used,
+        "relaxation_guide_source": relaxation_metadata.get("guide_source", ""),
         "initialization_seconds": initialization_seconds,
         "classical_window_seconds": classical_seconds,
         "quantum_window_seconds": quantum_seconds,
@@ -384,6 +405,7 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
 
 def _worker(spec_path: Path, output_path: Path) -> int:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    worker_start = time.perf_counter()
     try:
         record, methods = _run_case(spec)
         payload = {"record": record, "methods": methods}
@@ -407,6 +429,7 @@ def _worker(spec_path: Path, output_path: Path) -> int:
             },
             "methods": [],
         }
+    payload["record"]["worker_wall_seconds"] = time.perf_counter() - worker_start
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return 0
 
@@ -424,6 +447,7 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     numeric_fields = (
         "search_end_to_end_seconds",
         "full_end_to_end_seconds",
+        "worker_wall_seconds",
         "time_to_first_valid_seconds",
         "data_generation_seconds",
         "relaxation_seconds",
@@ -446,6 +470,7 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for size in sorted({int(row["n_assets"]) for row in records}):
         group = [row for row in records if int(row["n_assets"]) == size]
         successful = [row for row in group if row.get("success") is True]
+        failed = [row for row in group if row.get("success") is not True]
         summary: dict[str, Any] = {
             "n_assets": size,
             "runs": len(group),
@@ -454,7 +479,30 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "zero_breach_rate": sum(int(row.get("breaches", 1)) == 0 for row in successful)
             / max(len(successful), 1),
             "certified_runs": sum(bool(row.get("certification_completed")) for row in successful),
+            "relaxation_acceptance_rate": sum(
+                bool(row.get("relaxation_accepted")) for row in successful
+            )
+            / max(len(successful), 1),
+            "relaxation_bound_rate": sum(
+                bool(row.get("relaxation_bound_available")) for row in successful
+            )
+            / max(len(successful), 1),
+            "relaxation_fallback_rate": sum(
+                bool(row.get("relaxation_fallback_used")) for row in successful
+            )
+            / max(len(successful), 1),
         }
+        failed_seconds = [
+            float(row["worker_wall_seconds"])
+            for row in failed
+            if row.get("worker_wall_seconds") not in (None, "")
+            and np.isfinite(float(row["worker_wall_seconds"]))
+        ]
+        if failed_seconds:
+            summary["failed_worker_seconds_median"] = float(np.median(failed_seconds))
+        reasons = sorted({str(row.get("error", "")).strip() for row in failed if row.get("error")})
+        if reasons:
+            summary["failure_reasons"] = " | ".join(reasons)
         for field in numeric_fields:
             values = [
                 float(row[field])
@@ -523,6 +571,18 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
         color="#7B61A8",
         label="Full-universe guide relaxation",
     )
+    failed_rows = [row for row in summary if "failed_worker_seconds_median" in row]
+    if failed_rows:
+        axes[0, 0].scatter(
+            [int(row["n_assets"]) for row in failed_rows],
+            [float(row["failed_worker_seconds_median"]) for row in failed_rows],
+            marker="x",
+            s=65,
+            linewidths=2.0,
+            color="#D1495B",
+            label="Failed/time-limited case",
+            zorder=4,
+        )
     axes[0, 0].set_xscale("log")
     axes[0, 0].set_yscale("log")
     axes[0, 0].set_xlabel("Global asset universe size")
@@ -538,7 +598,7 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
         marker="o",
         linewidth=2.0,
         color="#00A6A6",
-        label="Validated incumbent vs relaxation",
+        label="Validated incumbent vs solved relaxation",
     )
     certified = [row for row in summary if "relative_hybrid_gap_to_gurobi_median" in row]
     if certified:
@@ -563,6 +623,22 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     axes[0, 1].set_title(
         f"Solution quality ({zero_breach_runs}/{successful_runs} valid runs had zero breaches)"
     )
+    uncertified_guide_runs = sum(
+        round(
+            (1.0 - float(row.get("relaxation_bound_rate", 0.0)))
+            * int(row.get("successful_runs", 0))
+        )
+        for row in summary
+    )
+    if uncertified_guide_runs:
+        axes[0, 1].text(
+            0.02,
+            0.04,
+            f"{uncertified_guide_runs} valid run(s) had no solved relaxation bound",
+            transform=axes[0, 1].transAxes,
+            fontsize=8,
+            color="#7B61A8",
+        )
     axes[0, 1].grid(alpha=0.25, which="both")
     axes[0, 1].legend(frameon=False, fontsize=8)
 
@@ -712,7 +788,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--relaxation-tolerance",
         type=float,
-        default=1e-10,
+        default=1e-8,
         help="explicit OSQP tolerance for the full-universe guide relaxation",
     )
     parser.add_argument("--relaxation-max-iter", type=int, default=250_000)
@@ -721,6 +797,15 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=300.0,
         help="native solver limit for the guide relaxation, in seconds",
+    )
+    parser.add_argument(
+        "--relaxation-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "continue with a usable guide iterate or the current portfolio when "
+            "the guide relaxation reaches its explicit limit"
+        ),
     )
     parser.add_argument("--allocation-tolerance", type=float, default=1e-8)
     parser.add_argument("--allocation-max-iter", type=int, default=100_000)
@@ -807,7 +892,8 @@ def main(argv: list[str] | None = None) -> int:
     completed_keys = {
         (int(row["n_assets"]), int(row["repetition"]), int(row["seed"]))
         for row in records
-        if row.get("n_assets") not in (None, "")
+        if row.get("success") is True
+        and row.get("n_assets") not in (None, "")
         and row.get("repetition") not in (None, "")
         and row.get("seed") not in (None, "")
     }
@@ -827,6 +913,26 @@ def main(argv: list[str] | None = None) -> int:
                         flush=True,
                     )
                     continue
+                records = [
+                    row
+                    for row in records
+                    if (
+                        int(row.get("n_assets", -1)),
+                        int(row.get("repetition", -1)),
+                        int(row.get("seed", -1)),
+                    )
+                    != case_key
+                ]
+                method_rows = [
+                    row
+                    for row in method_rows
+                    if (
+                        int(row.get("n_assets", -1)),
+                        int(row.get("repetition", -1)),
+                        int(row.get("seed", -1)),
+                    )
+                    != case_key
+                ]
                 spec = {
                     key: value
                     for key, value in vars(args).items()
@@ -855,6 +961,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--worker-output",
                     str(result_path),
                 ]
+                case_start = time.perf_counter()
                 try:
                     completed = subprocess.run(
                         worker_command,
@@ -872,6 +979,7 @@ def main(argv: list[str] | None = None) -> int:
                             "repetition": repetition,
                             "seed": seed,
                             "success": False,
+                            "worker_wall_seconds": float(args.case_time_limit),
                             "error": (
                                 "worker exceeded case_time_limit="
                                 f"{float(args.case_time_limit):g}s"
@@ -889,6 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                             "repetition": repetition,
                             "seed": seed,
                             "success": False,
+                            "worker_wall_seconds": time.perf_counter() - case_start,
                             "error": completed.stderr.strip() or completed.stdout.strip(),
                         }
                     )

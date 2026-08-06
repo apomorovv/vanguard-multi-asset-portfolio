@@ -179,9 +179,10 @@ operates only on the adaptive 16-asset change window. This is not a
 ### Scaling study
 
 The default study repeats the presentation-quality core from 250 through 20,000
-assets. Solver tolerances are explicit: the full-universe guide relaxation and
-the support-reduced final allocation have separate command-line options. Each
-isolated worker is time-limited and the runner checkpoints after every case.
+assets. The notebook uses one visible QP tolerance for both the full-universe
+guide and support-reduced allocation. Separate command-line options remain
+available for controlled solver studies. Each isolated worker is time-limited,
+warm-starts OSQP from the current portfolio, and checkpoints after every case.
 
 ```bash
 python scripts/run_hybrid_scaling.py \
@@ -190,22 +191,30 @@ python scripts/run_hybrid_scaling.py \
   --cardinality 50 \
   --window-size 16 \
   --backend osqp \
-  --relaxation-tolerance 1e-10 \
+  --relaxation-tolerance 1e-8 \
   --relaxation-max-iter 250000 \
-  --relaxation-time-limit 300 \
+  --relaxation-time-limit 30 \
   --allocation-tolerance 1e-8 \
   --allocation-max-iter 100000 \
-  --case-time-limit 360 \
+  --case-time-limit 180 \
   --quantum \
   --quantum-backend subspace \
   --no-gurobi \
   --output results/hybrid_scaling
 ```
 
-Use `--resume` to continue a partial directory or `--overwrite` to replace
-it. The output is deliberately compact: raw run/method CSVs, one summary CSV,
-environment/config manifests, and one four-panel validity/scalability/quantum
-figure.
+Use `--resume` to continue a partial directory or `--overwrite` to replace it.
+Resume skips successful cases and retries failed cases. The output is
+deliberately compact: raw run/method CSVs, one summary CSV, environment/config
+manifests, and one four-panel validity/scalability/quantum figure.
+
+By default, a guide relaxation that reaches its explicit time or iteration
+limit does not discard the experiment. The hybrid stage continues from a usable
+OSQP iterate or the current feasible portfolio; every reported final support is
+still solved and independently validated. Such a row is marked
+`relaxation_fallback_used=True`. The relaxation-gap field is intentionally
+blank whenever the guide was not returned as a solved bound. Pass
+`--no-relaxation-fallback` when a strict guide solve is required.
 
 A verified Aer GPU can be selected with `--quantum-backend aer_gpu`. This
 accelerates only circuit sampling; the full-universe OSQP factor solve and the
@@ -216,14 +225,14 @@ Large-universe points should be separate, one-repetition stretch tests:
 
 ```bash
 python scripts/run_hybrid_scaling.py \
-  --sizes 35000 50000 \
+  --sizes 35000 50000 80000 100000 \
   --repetitions 1 \
   --cardinality 50 \
   --window-size 16 \
   --backend osqp \
-  --relaxation-tolerance 1e-10 \
-  --relaxation-time-limit 300 \
-  --case-time-limit 360 \
+  --relaxation-tolerance 1e-8 \
+  --relaxation-time-limit 30 \
+  --case-time-limit 180 \
   --quantum \
   --quantum-backend subspace \
   --no-gurobi \
@@ -231,9 +240,10 @@ python scripts/run_hybrid_scaling.py \
   --output results/hybrid_scaling_stretch
 ```
 
-A timed-out case is recorded rather than allowed to run indefinitely. Larger
-instances demonstrate the scalable hybrid-search path and must not be described
-as globally certified unless an exact solver returns a valid bound and gap.
+A worker that exceeds the outer case limit is recorded rather than allowed to
+run indefinitely. Larger instances demonstrate the scalable hybrid-search path
+and must not be described as globally certified unless an exact solver returns
+a valid bound and gap.
 
 ### IBM QPU demonstration
 

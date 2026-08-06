@@ -954,8 +954,13 @@ def write_hybrid_artifacts(
         plot_functions = [
             (lambda path: plot_objective_and_runtime(run, path), "objective_runtime.png"),
             (lambda path: plot_key_guardrails(run, path), "key_guardrails.png"),
+            (lambda path: plot_constraint_slacks(run, path), "constraint_slacks.png"),
             (lambda path: plot_group_exposure(run, path), "group_exposure.png"),
             (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),
+            (
+                lambda path: plot_correlation_communities(run, path),
+                "correlation_communities.png",
+            ),
         ]
     else:
         plot_functions = [

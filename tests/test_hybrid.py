@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -13,6 +15,7 @@ from vanguard_portfolio.allocation import (
     find_feasible_support_milp,
     solve_relaxation,
 )
+from vanguard_portfolio.classical_continuous import _repair_turnover_residual
 from vanguard_portfolio.data_generation import (
     generate_factor_universe,
     generate_return_scenarios,
@@ -257,8 +260,72 @@ class HybridTests(unittest.TestCase):
             self.assertIn("quantum_execution", artifacts)
             self.assertNotIn("allocations", artifacts)
             self.assertNotIn("problem", artifacts)
-            self.assertFalse((Path(directory) / "plots/constraint_slacks.png").exists())
+            self.assertTrue((Path(directory) / "plots/constraint_slacks.png").is_file())
+            self.assertTrue(
+                (Path(directory) / "plots/correlation_communities.png").is_file()
+            )
             self.assertTrue((Path(directory) / "plots/key_guardrails.png").is_file())
+
+    def test_hybrid_can_continue_after_an_explicit_guide_limit(self) -> None:
+        accepted = solve_relaxation(self.problem, self.preferences, self.constraints)
+        limited = replace(
+            accepted,
+            status="run time limit reached",
+            success=False,
+            optimal=False,
+            feasible=False,
+            breaches=1,
+            max_violation=1.0e-5,
+        )
+        config = HybridConfig(
+            iterations=1,
+            window_size=5,
+            enumerate_windows_up_to=1_000,
+            run_quantum=False,
+            run_gurobi_reference=False,
+            allow_relaxation_fallback=True,
+        )
+        with mock.patch(
+            "vanguard_portfolio.hybrid.solve_relaxation", return_value=limited
+        ):
+            run = run_hybrid_optimizer(
+                self.problem, self.preferences, self.constraints, config
+            )
+
+        self.assertTrue(run.best.success)
+        self.assertTrue(run.best.feasible)
+        self.assertEqual(run.best.breaches, 0)
+        self.assertFalse(run.relaxation.success)
+        self.assertTrue(run.relaxation.metadata["fallback_used"])
+        self.assertEqual(
+            run.relaxation.metadata["guide_source"],
+            "unaccepted_continuous_iterate",
+        )
+        self.assertIn("continuous_relaxation", run.skipped)
+        relaxation_row = run.summary_records()[0]
+        self.assertEqual(relaxation_row["certification"], "uncertified_guide_iterate")
+
+    def test_turnover_residual_repair_is_a_convex_contraction(self) -> None:
+        problem = generate_factor_universe(
+            n_assets=20,
+            n_groups=4,
+            n_factors=4,
+            seed=17,
+            current_cardinality=5,
+            materialize_covariance=False,
+        )
+        problem.max_turnover = 0.20
+        candidate = problem.w0.copy()
+        held = int(np.flatnonzero(problem.w0 > 0.0)[0])
+        unheld = int(np.flatnonzero(problem.w0 == 0.0)[0])
+        candidate[held] -= 0.1000001
+        candidate[unheld] += 0.1000001
+
+        repaired, metadata = _repair_turnover_residual(candidate, problem)
+
+        self.assertTrue(metadata["turnover_repair_applied"])
+        self.assertAlmostEqual(repaired.sum(), problem.budget)
+        self.assertLessEqual(np.sum(np.abs(repaired - problem.w0)), 0.20)
 
     def test_change_windows_are_group_diverse_and_rotate_unheld_assets(self) -> None:
         problem = generate_factor_universe(

@@ -611,6 +611,7 @@ def _solve_extended_osqp(
     max_iter: int = 100_000,
     time_limit: float | None = None,
     polish: bool = True,
+    warm_start: bool = True,
     verbose: bool = False,
 ) -> SolveResult:
     try:
@@ -662,6 +663,26 @@ def _solve_extended_osqp(
         )
     setup_seconds = time.perf_counter() - setup_start
 
+    warm_started = False
+    if warm_start:
+        n = problem.n
+        weights = np.clip(problem.w0, problem.lower, problem.upper)
+        initial = np.zeros(data.q.size, dtype=float)
+        initial[:n] = weights
+        initial[n : 2 * n] = np.abs(weights - problem.w0)
+        factor_end = 2 * n
+        if data.n_factors:
+            factor_end += data.n_factors
+            initial[2 * n : factor_end] = problem.factor_loadings.T @ weights
+        if data.n_scenarios:
+            losses = -(constraints.scenario_returns @ weights)
+            eta = float(np.quantile(losses, constraints.cvar_alpha))
+            initial[factor_end] = eta
+            initial[factor_end + 1 :] = np.maximum(losses - eta, 0.0)
+        if np.all(np.isfinite(initial)):
+            solver.warm_start(x=initial)
+            warm_started = True
+
     solve_start = time.perf_counter()
     try:
         solved = solver.solve(raise_error=False)
@@ -669,10 +690,15 @@ def _solve_extended_osqp(
         solved = solver.solve()
     solve_seconds = time.perf_counter() - solve_start
     status = str(solved.info.status)
-    success = status.lower().startswith("solved") and solved.x is not None
+    has_primal_iterate = (
+        solved.x is not None
+        and np.asarray(solved.x).size >= problem.n
+        and np.all(np.isfinite(np.asarray(solved.x)[: problem.n]))
+    )
+    success = status.lower().startswith("solved") and has_primal_iterate
     weights = (
         np.asarray(solved.x[: problem.n], dtype=float)
-        if success
+        if has_primal_iterate
         else np.full(problem.n, np.nan)
     )
     return _validated_extended_result(
@@ -699,6 +725,9 @@ def _solve_extended_osqp(
             "requested_tolerance": float(tol),
             "native_tolerance": native_tol,
             "time_limit": None if time_limit is None else float(time_limit),
+            "polish": bool(polish),
+            "warm_started": warm_started,
+            "has_primal_iterate": has_primal_iterate,
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,
@@ -1079,7 +1108,7 @@ def _solve_extended(
     if lower_name in {"osqp", "osqp_extended"}:
         accepted = _select_solver_options(
             options,
-            {"tol", "max_iter", "time_limit", "polish", "verbose"},
+            {"tol", "max_iter", "time_limit", "polish", "warm_start", "verbose"},
             backend="OSQP",
         )
         return _solve_extended_osqp(problem, preferences, constraints, **accepted)

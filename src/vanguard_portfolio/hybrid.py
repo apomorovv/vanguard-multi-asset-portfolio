@@ -45,6 +45,7 @@ class HybridConfig:
     allocation_backend: str = "scipy"
     allocation_options: dict[str, Any] = field(default_factory=dict)
     relaxation_options: dict[str, Any] | None = None
+    allow_relaxation_fallback: bool = False
     initial_trials: int = 250
     initial_milp_time_limit: float = 20.0
     classical_tabu_iterations: int = 50
@@ -104,7 +105,15 @@ class HybridRun:
         rows: list[dict[str, Any]] = []
         for result in self.all_results():
             if result.model_type == "continuous_relaxation":
-                certification = "continuous_relaxation_lower_bound"
+                certification = (
+                    "continuous_relaxation_lower_bound"
+                    if result.success and result.optimal
+                    else (
+                        "validated_continuous_guide"
+                        if result.success
+                        else "uncertified_guide_iterate"
+                    )
+                )
             elif result.method == "gurobi_cardinality_miqp" and result.optimal:
                 certification = "global_mip_optimal_within_tolerance"
             elif result.optimal:
@@ -194,6 +203,7 @@ def run_hybrid_optimizer(
     if constraints.exact_cardinality is None:
         raise ValueError("the hybrid optimizer requires exact_cardinality")
     total_start = time.perf_counter()
+    skipped: dict[str, str] = {}
     relaxation_options = (
         config.allocation_options
         if config.relaxation_options is None
@@ -206,8 +216,13 @@ def run_hybrid_optimizer(
         backend=config.allocation_backend,
         solver_options=dict(relaxation_options),
     )
-    if not relaxation.success:
-        raise ValueError(
+    if relaxation.success:
+        guide_weights = relaxation.weights
+        relaxation.metadata.update(
+            {"guide_source": "accepted_continuous_relaxation", "fallback_used": False}
+        )
+    else:
+        relaxation_error = (
             "continuous relaxation was not accepted: "
             f"backend={config.allocation_backend!r}, "
             f"native_status={relaxation.status!r}, "
@@ -217,6 +232,24 @@ def run_hybrid_optimizer(
             "If the native solver converged, set relaxation_options['tol'] "
             "comfortably below the validator tolerance (1e-7)."
         )
+        if not config.allow_relaxation_fallback:
+            raise ValueError(relaxation_error)
+        candidate = np.asarray(relaxation.weights, dtype=float)
+        has_usable_iterate = (
+            candidate.shape == (problem.n,)
+            and np.all(np.isfinite(candidate))
+            and np.linalg.norm(candidate, ord=1) > 0.0
+        )
+        guide_weights = candidate if has_usable_iterate else problem.w0.copy()
+        guide_source = (
+            "unaccepted_continuous_iterate"
+            if has_usable_iterate
+            else "current_portfolio"
+        )
+        relaxation.metadata.update(
+            {"guide_source": guide_source, "fallback_used": True}
+        )
+        skipped["continuous_relaxation"] = relaxation_error
     oracle = AllocationOracle(
         problem,
         preferences,
@@ -226,7 +259,7 @@ def run_hybrid_optimizer(
     )
     initial_evaluation = find_feasible_initial_support(
         oracle,
-        relaxation.weights,
+        guide_weights,
         max_trials=config.initial_trials,
         seed=config.seed,
         milp_time_limit=config.initial_milp_time_limit,
@@ -242,7 +275,6 @@ def run_hybrid_optimizer(
     windows: list[ChangeWindow] = []
     classical_searches: list[WindowSearchResult] = []
     quantum_searches: list[QuantumSearchResult] = []
-    skipped: dict[str, str] = {}
     timeline: list[dict[str, float | int | str]] = [
         {
             "stage": "initial",
@@ -264,7 +296,7 @@ def run_hybrid_optimizer(
                 preferences,
                 constraints,
                 current.weights,
-                relaxation.weights,
+                guide_weights,
                 window_size=config.window_size,
                 held_fraction=config.held_fraction,
                 community_labels=communities,
