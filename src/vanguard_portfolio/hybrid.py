@@ -16,7 +16,7 @@ from .allocation import (
     solve_relaxation,
 )
 from .classical_discrete import solve_cardinality_gurobi
-from .quantum_solver import XYQAOAConfig, QuantumSearchResult, solve_penalty_qaoa, solve_xy_qaoa
+from .quantum_solver import QuantumSearchResult, XYQAOAConfig, solve_penalty_qaoa, solve_xy_qaoa
 from .qubo_builder import QUBOModel, build_window_qubo
 from .schemas import (
     PortfolioConstraints,
@@ -44,6 +44,7 @@ class HybridConfig:
     held_fraction: float = 0.45
     allocation_backend: str = "scipy"
     allocation_options: dict[str, Any] = field(default_factory=dict)
+    relaxation_options: dict[str, Any] | None = None
     initial_trials: int = 250
     initial_milp_time_limit: float = 20.0
     classical_tabu_iterations: int = 50
@@ -193,12 +194,17 @@ def run_hybrid_optimizer(
     if constraints.exact_cardinality is None:
         raise ValueError("the hybrid optimizer requires exact_cardinality")
     total_start = time.perf_counter()
+    relaxation_options = (
+        config.allocation_options
+        if config.relaxation_options is None
+        else config.relaxation_options
+    )
     relaxation = solve_relaxation(
         problem,
         preferences,
         constraints,
         backend=config.allocation_backend,
-        solver_options=dict(config.allocation_options),
+        solver_options=dict(relaxation_options),
     )
     if not relaxation.success:
         raise ValueError(
@@ -208,7 +214,7 @@ def run_hybrid_optimizer(
             f"validated_feasible={relaxation.feasible}, "
             f"breaches={relaxation.breaches}, "
             f"max_violation={relaxation.max_violation:.3e}. "
-            "If the native solver converged, set allocation_options.tol "
+            "If the native solver converged, set relaxation_options['tol'] "
             "comfortably below the validator tolerance (1e-7)."
         )
     oracle = AllocationOracle(

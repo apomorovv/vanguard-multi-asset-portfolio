@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,9 @@ class ScalingScriptTests(unittest.TestCase):
         self.assertEqual(args.certification_max_assets, 2_000)
         self.assertFalse(args.materialize_covariance)
         self.assertEqual(args.window_size, 16)
+        self.assertEqual(args.relaxation_tolerance, 1e-10)
+        self.assertEqual(args.allocation_tolerance, 1e-8)
+        self.assertEqual(args.case_time_limit, 360.0)
 
     def test_summary_reports_medians_and_zero_breach_rate(self) -> None:
         records = [
@@ -54,6 +58,14 @@ class ScalingScriptTests(unittest.TestCase):
         self.assertEqual(summary[0]["certified_runs"], 2)
         self.assertEqual(summary[0]["search_end_to_end_seconds_median"], 1.5)
         self.assertAlmostEqual(summary[0]["relative_gap_to_relaxation_median"], 0.03)
+
+    def test_all_failed_checkpoint_does_not_attempt_log_scale_plot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            created = self.scaling._plots(
+                [{"n_assets": 250, "runs": 1, "successful_runs": 0}],
+                Path(directory),
+            )
+        self.assertEqual(created, [])
 
 
 if __name__ == "__main__":

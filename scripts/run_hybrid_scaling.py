@@ -22,9 +22,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from statistics import median
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -39,7 +39,6 @@ from vanguard_portfolio.hybrid import HybridConfig, run_hybrid_optimizer
 from vanguard_portfolio.quantum_solver import XYQAOAConfig
 from vanguard_portfolio.schemas import PortfolioConstraints, Preferences
 
-
 DEFAULT_SIZES = (250, 500, 1_000, 2_000, 5_000, 10_000, 20_000)
 OUTPUT_FILENAMES = (
     "scaling_runs.csv",
@@ -48,6 +47,10 @@ OUTPUT_FILENAMES = (
     "scaling_environment.json",
     "scaling_config.json",
     "scaling_manifest.json",
+    "scaling_evidence.png",
+    "scaling_evidence.pdf",
+)
+LEGACY_PLOT_FILENAMES = (
     "scaling_runtime.png",
     "scaling_runtime.pdf",
     "scaling_quality_and_feasibility.png",
@@ -80,6 +83,13 @@ RUN_COLUMNS = (
     "time_to_first_valid_seconds",
     "data_generation_seconds",
     "relaxation_seconds",
+    "relaxation_requested_tolerance",
+    "relaxation_native_tolerance",
+    "relaxation_iterations",
+    "relaxation_primal_residual",
+    "relaxation_dual_residual",
+    "relaxation_rho_updates",
+    "relaxation_status",
     "initialization_seconds",
     "classical_window_seconds",
     "quantum_window_seconds",
@@ -116,6 +126,33 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], preferred: Iterable[str] 
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    """Read a checkpoint while restoring simple scalar types."""
+
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        raw = list(csv.DictReader(handle))
+    rows: list[dict[str, Any]] = []
+    for raw_row in raw:
+        row: dict[str, Any] = {}
+        for key, value in raw_row.items():
+            if value in (None, ""):
+                row[key] = ""
+            elif value == "True":
+                row[key] = True
+            elif value == "False":
+                row[key] = False
+            else:
+                try:
+                    number = float(value)
+                    row[key] = int(number) if number.is_integer() else number
+                except ValueError:
+                    row[key] = value
+        rows.append(row)
+    return rows
 
 
 def _peak_rss_gib() -> float:
@@ -174,6 +211,11 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
             "tol": float(spec["allocation_tolerance"]),
             "max_iter": int(spec["allocation_max_iter"]),
         },
+        relaxation_options={
+            "tol": float(spec["relaxation_tolerance"]),
+            "max_iter": int(spec["relaxation_max_iter"]),
+            "time_limit": float(spec["relaxation_time_limit"]),
+        },
         initial_trials=int(spec["initial_trials"]),
         initial_milp_time_limit=float(spec["initial_milp_time_limit"]),
         classical_tabu_iterations=int(spec["classical_tabu_iterations"]),
@@ -213,6 +255,7 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     gurobi_seconds = 0.0 if gurobi is None else float(gurobi.runtime)
     search_solver_seconds = max(float(run.runtime) - gurobi_seconds, 0.0)
     relaxation_seconds = float(run.relaxation.runtime)
+    relaxation_metadata = run.relaxation.metadata
     time_to_valid = float(run.timeline[0]["elapsed_seconds"])
     initialization_seconds = max(time_to_valid - relaxation_seconds, 0.0)
     classical_seconds = sum(
@@ -286,6 +329,17 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "time_to_first_valid_seconds": time_to_valid,
         "data_generation_seconds": data_seconds,
         "relaxation_seconds": relaxation_seconds,
+        "relaxation_requested_tolerance": relaxation_metadata.get(
+            "requested_tolerance", spec["relaxation_tolerance"]
+        ),
+        "relaxation_native_tolerance": relaxation_metadata.get(
+            "native_tolerance", spec["relaxation_tolerance"]
+        ),
+        "relaxation_iterations": relaxation_metadata.get("iterations", ""),
+        "relaxation_primal_residual": relaxation_metadata.get("primal_residual", ""),
+        "relaxation_dual_residual": relaxation_metadata.get("dual_residual", ""),
+        "relaxation_rho_updates": relaxation_metadata.get("rho_updates", ""),
+        "relaxation_status": run.relaxation.status,
         "initialization_seconds": initialization_seconds,
         "classical_window_seconds": classical_seconds,
         "quantum_window_seconds": quantum_seconds,
@@ -333,7 +387,7 @@ def _worker(spec_path: Path, output_path: Path) -> int:
     try:
         record, methods = _run_case(spec)
         payload = {"record": record, "methods": methods}
-    except Exception as exc:  # a failed size remains auditable in the final table
+    except Exception as exc:  # noqa: BLE001 - a failed case must remain auditable
         payload = {
             "record": {
                 "study_tier": "run_failure",
@@ -381,6 +435,7 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "relative_hybrid_gap_to_gurobi",
         "gurobi_reported_gap",
         "peak_rss_gib",
+        "factor_risk_storage_mib",
         "dense_covariance_gib_avoided",
         "quantum_angle_seconds",
         "quantum_sampler_seconds",
@@ -415,6 +470,18 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _checkpoint_results(
+    output: Path,
+    records: list[dict[str, Any]],
+    method_rows: list[dict[str, Any]],
+) -> None:
+    """Persist recoverable raw and summarized evidence after every case."""
+
+    _write_csv(output / "scaling_runs.csv", records, RUN_COLUMNS)
+    _write_csv(output / "scaling_methods.csv", method_rows)
+    _write_csv(output / "scaling_summary.csv", _summary_rows(records))
+
+
 def _errorbar(ax: Any, rows: list[dict[str, Any]], field: str, **kwargs: Any) -> None:
     usable = [row for row in rows if f"{field}_median" in row]
     x = np.asarray([int(row["n_assets"]) for row in usable])
@@ -425,234 +492,158 @@ def _errorbar(ax: Any, rows: list[dict[str, Any]], field: str, **kwargs: Any) ->
 
 
 def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
+    """Create one compact figure containing the scaling claims that matter."""
+
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import matplotlib.ticker as ticker
+    from matplotlib import ticker
 
-    created: list[Path] = []
-    colors = {
-        "data_generation_seconds": "#7B61A8",
-        "relaxation_seconds": "#0B5CAD",
-        "initialization_seconds": "#6BAED6",
-        "classical_window_seconds": "#00A6A6",
-        "quantum_window_seconds": "#F28E2B",
-        "gurobi_seconds": "#D1495B",
-    }
-    labels = {
-        "data_generation_seconds": "Data generation",
-        "relaxation_seconds": "Factor-QP relaxation",
-        "initialization_seconds": "Valid sparse start",
-        "classical_window_seconds": "Classical windows",
-        "quantum_window_seconds": "XY-QAOA windows",
-        "gurobi_seconds": "Gurobi certificate",
-    }
+    if not summary or not any(int(row.get("successful_runs", 0)) > 0 for row in summary):
+        return []
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
+    fig, axes = plt.subplots(2, 2, figsize=(13.0, 9.0))
+
     _errorbar(
-        axes[0],
+        axes[0, 0],
         summary,
         "search_end_to_end_seconds",
         marker="o",
         linewidth=2.0,
         color="#0B5CAD",
-        label="Hybrid search (no certificate)",
+        label="Complete hybrid search",
     )
-    certified_summary = [row for row in summary if int(row.get("certified_runs", 0)) > 0]
-    if certified_summary:
-        _errorbar(
-            axes[0],
-            certified_summary,
-            "full_end_to_end_seconds",
-            marker="s",
-            linewidth=1.8,
-            color="#D1495B",
-            label="Including Gurobi certificate",
-        )
-    axes[0].set_xscale("log")
-    axes[0].set_yscale("log")
-    axes[0].set_xlabel("Asset universe size")
-    axes[0].set_ylabel("Wall-clock seconds; median and IQR")
-    axes[0].set_title("End-to-end scaling")
-    axes[0].grid(alpha=0.25, which="both")
-    axes[0].legend(frameon=False, fontsize=8)
-
-    x = np.arange(len(summary))
-    bottom = np.zeros(len(summary))
-    for field, color in colors.items():
-        values = np.asarray([float(row.get(f"{field}_median", 0.0)) for row in summary])
-        axes[1].bar(x, values, bottom=bottom, color=color, label=labels[field])
-        bottom += values
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels([f"{int(row['n_assets']):,}" for row in summary], rotation=30)
-    axes[1].set_yscale("log")
-    axes[1].set_xlabel("Asset universe size")
-    axes[1].set_ylabel("Median seconds (log scale)")
-    axes[1].set_title("Runtime composition")
-    axes[1].grid(axis="y", alpha=0.25)
-    axes[1].legend(frameon=False, fontsize=7, ncol=2)
-    fig.tight_layout()
-    for suffix in ("png", "pdf"):
-        path = output / f"scaling_runtime.{suffix}"
-        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
-        created.append(path)
-    plt.close(fig)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
     _errorbar(
-        axes[0],
+        axes[0, 0],
+        summary,
+        "relaxation_seconds",
+        marker="s",
+        linewidth=1.8,
+        color="#7B61A8",
+        label="Full-universe guide relaxation",
+    )
+    axes[0, 0].set_xscale("log")
+    axes[0, 0].set_yscale("log")
+    axes[0, 0].set_xlabel("Global asset universe size")
+    axes[0, 0].set_ylabel("Wall-clock seconds; median and IQR")
+    axes[0, 0].set_title("End-to-end speed")
+    axes[0, 0].grid(alpha=0.25, which="both")
+    axes[0, 0].legend(frameon=False, fontsize=8)
+
+    _errorbar(
+        axes[0, 1],
         summary,
         "relative_gap_to_relaxation",
         marker="o",
         linewidth=2.0,
         color="#00A6A6",
-        label="Hybrid incumbent vs relaxation",
+        label="Validated incumbent vs relaxation",
     )
     certified = [row for row in summary if "relative_hybrid_gap_to_gurobi_median" in row]
     if certified:
         _errorbar(
-            axes[0],
+            axes[0, 1],
             certified,
             "relative_hybrid_gap_to_gurobi",
             marker="s",
             linewidth=1.8,
             color="#D1495B",
-            label="Hybrid incumbent vs Gurobi",
+            label="Validated incumbent vs Gurobi",
         )
-    axes[0].set_xscale("log")
-    axes[0].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
-    axes[0].set_xlabel("Asset universe size")
-    axes[0].set_ylabel("Relative objective gap; median and IQR")
-    axes[0].set_title("Solution quality")
-    axes[0].grid(alpha=0.25, which="both")
-    axes[0].legend(frameon=False, fontsize=8)
+    axes[0, 1].set_xscale("log")
+    axes[0, 1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    axes[0, 1].set_xlabel("Global asset universe size")
+    axes[0, 1].set_ylabel("Relative objective gap; median and IQR")
+    successful_runs = sum(int(row.get("successful_runs", 0)) for row in summary)
+    zero_breach_runs = sum(
+        round(float(row.get("zero_breach_rate", 0.0)) * int(row.get("successful_runs", 0)))
+        for row in summary
+    )
+    axes[0, 1].set_title(
+        f"Solution quality ({zero_breach_runs}/{successful_runs} valid runs had zero breaches)"
+    )
+    axes[0, 1].grid(alpha=0.25, which="both")
+    axes[0, 1].legend(frameon=False, fontsize=8)
 
-    x_values = [int(row["n_assets"]) for row in summary]
-    axes[1].plot(
-        x_values,
-        [float(row["success_rate"]) for row in summary],
-        marker="o",
-        linewidth=2.0,
-        color="#0B5CAD",
-        label="Completed",
-    )
-    axes[1].plot(
-        x_values,
-        [float(row["zero_breach_rate"]) for row in summary],
-        marker="s",
-        linewidth=1.8,
-        color="#00A6A6",
-        label="Zero breaches",
-    )
-    axes[1].set_xscale("log")
-    axes[1].set_ylim(-0.02, 1.02)
-    axes[1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
-    axes[1].set_xlabel("Asset universe size")
-    axes[1].set_ylabel("Run rate")
-    axes[1].set_title("Reliability and independent validation")
-    axes[1].grid(alpha=0.25, which="both")
-    axes[1].legend(frameon=False, fontsize=8)
-    fig.tight_layout()
-    for suffix in ("png", "pdf"):
-        path = output / f"scaling_quality_and_feasibility.{suffix}"
-        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
-        created.append(path)
-    plt.close(fig)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
-    _errorbar(
-        axes[0],
-        summary,
-        "peak_rss_gib",
-        marker="o",
-        linewidth=2.0,
-        color="#7B61A8",
-        label="Measured process peak RSS",
-    )
-    _errorbar(
-        axes[0],
-        summary,
-        "dense_covariance_gib_avoided",
-        marker="s",
-        linewidth=1.8,
-        color="#D1495B",
-        label="One dense covariance matrix avoided",
-    )
-    axes[0].set_xscale("log")
-    axes[0].set_yscale("log")
-    axes[0].set_xlabel("Asset universe size")
-    axes[0].set_ylabel("GiB; median and IQR")
-    axes[0].set_title("Factor-native memory scaling")
-    axes[0].grid(alpha=0.25, which="both")
-    axes[0].legend(frameon=False, fontsize=8)
-
-    _errorbar(
-        axes[1],
-        summary,
-        "time_to_first_valid_seconds",
-        marker="o",
-        linewidth=2.0,
-        color="#00A6A6",
-    )
-    axes[1].set_xscale("log")
-    axes[1].set_yscale("log")
-    axes[1].set_xlabel("Asset universe size")
-    axes[1].set_ylabel("Seconds; median and IQR")
-    axes[1].set_title("Time to first valid exact-K portfolio")
-    axes[1].grid(alpha=0.25, which="both")
-    fig.tight_layout()
-    for suffix in ("png", "pdf"):
-        path = output / f"scaling_memory_and_first_valid.{suffix}"
-        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
-        created.append(path)
-    plt.close(fig)
-
-    quantum_summary = [row for row in summary if "quantum_angle_seconds_median" in row]
-    if quantum_summary:
-        fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8))
-        for field, label, color, marker in (
-            ("quantum_angle_seconds", "CPU angle optimization", "#7B61A8", "o"),
-            ("quantum_sampler_seconds", "Circuit sampler", "#F28E2B", "s"),
-            ("quantum_allocation_seconds", "Allocation oracle", "#00A6A6", "^"),
-        ):
-            _errorbar(
-                axes[0],
-                quantum_summary,
-                field,
-                marker=marker,
-                linewidth=1.8,
-                color=color,
-                label=label,
-            )
-        axes[0].set_xscale("log")
-        axes[0].set_yscale("log")
-        axes[0].set_xlabel("Asset universe size")
-        axes[0].set_ylabel("Seconds; median and IQR")
-        axes[0].set_title("Fixed-window quantum phase timing")
-        axes[0].grid(alpha=0.25, which="both")
-        axes[0].legend(frameon=False, fontsize=8)
-        _errorbar(
-            axes[1],
-            quantum_summary,
-            "quantum_cardinality_rate",
+    memory_rows = [
+        row
+        for row in summary
+        if "peak_rss_gib_median" in row
+        and "factor_risk_storage_mib_median" in row
+        and "dense_covariance_gib_avoided_median" in row
+    ]
+    if memory_rows:
+        x = np.asarray([int(row["n_assets"]) for row in memory_rows], dtype=float)
+        axes[1, 0].plot(
+            x,
+            [float(row["peak_rss_gib_median"]) for row in memory_rows],
             marker="o",
             linewidth=2.0,
-            color="#0B5CAD",
+            color="#7B61A8",
+            label="Measured worker peak RSS",
         )
-        axes[1].set_xscale("log")
-        axes[1].set_ylim(-0.02, 1.02)
-        axes[1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
-        axes[1].set_xlabel("Asset universe size")
-        axes[1].set_ylabel("Fixed-cardinality shot rate")
-        axes[1].set_title("Quantum feasibility diagnostic")
-        axes[1].grid(alpha=0.25, which="both")
-        fig.tight_layout()
-        for suffix in ("png", "pdf"):
-            path = output / f"scaling_quantum.{suffix}"
-            fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
-            created.append(path)
-        plt.close(fig)
+        axes[1, 0].plot(
+            x,
+            [
+                float(row["factor_risk_storage_mib_median"]) / 1024.0
+                for row in memory_rows
+            ],
+            marker="^",
+            linewidth=1.8,
+            color="#00A6A6",
+            label=r"Factor arrays $B,\Omega,D$",
+        )
+        axes[1, 0].plot(
+            x,
+            [float(row["dense_covariance_gib_avoided_median"]) for row in memory_rows],
+            marker="s",
+            linewidth=1.8,
+            color="#D1495B",
+            label=r"Dense covariance $\Sigma$ (not allocated)",
+        )
+    axes[1, 0].set_xscale("log")
+    axes[1, 0].set_yscale("log")
+    axes[1, 0].set_xlabel("Global asset universe size")
+    axes[1, 0].set_ylabel("GiB")
+    axes[1, 0].set_title("Factor-native memory advantage")
+    axes[1, 0].grid(alpha=0.25, which="both")
+    axes[1, 0].legend(frameon=False, fontsize=8)
+
+    _errorbar(
+        axes[1, 1],
+        summary,
+        "classical_window_seconds",
+        marker="o",
+        linewidth=1.8,
+        color="#00A6A6",
+        label="Classical LNS + allocation",
+    )
+    _errorbar(
+        axes[1, 1],
+        summary,
+        "quantum_window_seconds",
+        marker="s",
+        linewidth=1.8,
+        color="#F28E2B",
+        label="XY-QAOA proposals + allocation",
+    )
+    axes[1, 1].set_xscale("log")
+    axes[1, 1].set_yscale("log")
+    axes[1, 1].set_xlabel("Global asset universe size")
+    axes[1, 1].set_ylabel("Seconds; median and IQR")
+    axes[1, 1].set_title("Fixed-window classical and quantum work")
+    axes[1, 1].grid(alpha=0.25, which="both")
+    axes[1, 1].legend(frameon=False, fontsize=8)
+
+    fig.suptitle("Factor-native hybrid solver: validity, scalability, and quantum augmentation")
+    fig.tight_layout()
+    created: list[Path] = []
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_evidence.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
+    plt.close(fig)
     return created
 
 
@@ -718,8 +709,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-size", type=int, default=16)
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--backend", default="osqp")
+    parser.add_argument(
+        "--relaxation-tolerance",
+        type=float,
+        default=1e-10,
+        help="explicit OSQP tolerance for the full-universe guide relaxation",
+    )
+    parser.add_argument("--relaxation-max-iter", type=int, default=250_000)
+    parser.add_argument(
+        "--relaxation-time-limit",
+        type=float,
+        default=300.0,
+        help="native solver limit for the guide relaxation, in seconds",
+    )
     parser.add_argument("--allocation-tolerance", type=float, default=1e-8)
-    parser.add_argument("--allocation-max-iter", type=int, default=500_000)
+    parser.add_argument("--allocation-max-iter", type=int, default=100_000)
     parser.add_argument("--minimum-active-weight", type=float, default=0.005)
     parser.add_argument("--maximum-weight", type=float, default=0.04)
     parser.add_argument("--max-turnover", type=float, default=0.40)
@@ -751,6 +755,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20260802)
     parser.add_argument("--allow-failures", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep completed size/repetition rows and run only missing cases",
+    )
+    parser.add_argument(
+        "--case-time-limit",
+        type=float,
+        default=360.0,
+        help="hard wall-clock limit for each isolated worker process",
+    )
     parser.add_argument("--output", type=Path, default=ROOT / "results/hybrid_scaling")
     parser.add_argument("--worker-spec", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--worker-output", type=Path, help=argparse.SUPPRESS)
@@ -767,22 +782,35 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("every asset size must be at least two")
     if args.repetitions <= 0:
         raise ValueError("repetitions must be positive")
+    if args.overwrite and args.resume:
+        raise ValueError("--overwrite and --resume are mutually exclusive")
+    if args.case_time_limit <= 0.0:
+        raise ValueError("case_time_limit must be positive")
+    if args.relaxation_time_limit <= 0.0:
+        raise ValueError("relaxation_time_limit must be positive")
 
     existing_outputs = [
         args.output / name
-        for name in OUTPUT_FILENAMES
+        for name in (*OUTPUT_FILENAMES, *LEGACY_PLOT_FILENAMES)
         if (args.output / name).is_file()
     ]
-    if existing_outputs and not args.overwrite:
+    if existing_outputs and not (args.overwrite or args.resume):
         raise FileExistsError(
-            f"{args.output} contains a scaling result; pass --overwrite to replace it"
+            f"{args.output} contains a scaling result; pass --resume or --overwrite"
         )
     if args.overwrite:
         for path in existing_outputs:
             path.unlink()
     args.output.mkdir(parents=True, exist_ok=True)
-    records: list[dict[str, Any]] = []
-    method_rows: list[dict[str, Any]] = []
+    records = _read_csv(args.output / "scaling_runs.csv") if args.resume else []
+    method_rows = _read_csv(args.output / "scaling_methods.csv") if args.resume else []
+    completed_keys = {
+        (int(row["n_assets"]), int(row["repetition"]), int(row["seed"]))
+        for row in records
+        if row.get("n_assets") not in (None, "")
+        and row.get("repetition") not in (None, "")
+        and row.get("seed") not in (None, "")
+    }
     with tempfile.TemporaryDirectory(prefix="vanguard-scaling-") as directory:
         work = Path(directory)
         case_index = 0
@@ -791,6 +819,14 @@ def main(argv: list[str] | None = None) -> int:
             for repetition in range(args.repetitions):
                 case_index += 1
                 seed = int(args.seed + 10_000 * int(size) + repetition)
+                case_key = (int(size), repetition, seed)
+                if case_key in completed_keys:
+                    print(
+                        f"[{case_index}/{total_cases}] n={int(size):,} "
+                        f"repetition={repetition + 1}: checkpoint already present",
+                        flush=True,
+                    )
+                    continue
                 spec = {
                     key: value
                     for key, value in vars(args).items()
@@ -811,20 +847,40 @@ def main(argv: list[str] | None = None) -> int:
                     f"[{case_index}/{total_cases}] n={int(size):,} repetition={repetition + 1}",
                     flush=True,
                 )
-                completed = subprocess.run(
-                    [
-                        sys.executable,
-                        str(Path(__file__).resolve()),
-                        "--worker-spec",
-                        str(spec_path),
-                        "--worker-output",
-                        str(result_path),
-                    ],
-                    cwd=ROOT,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
+                worker_command = [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--worker-spec",
+                    str(spec_path),
+                    "--worker-output",
+                    str(result_path),
+                ]
+                try:
+                    completed = subprocess.run(
+                        worker_command,
+                        cwd=ROOT,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=float(args.case_time_limit),
+                    )
+                except subprocess.TimeoutExpired:
+                    records.append(
+                        {
+                            "study_tier": "worker_timeout",
+                            "n_assets": int(size),
+                            "repetition": repetition,
+                            "seed": seed,
+                            "success": False,
+                            "error": (
+                                "worker exceeded case_time_limit="
+                                f"{float(args.case_time_limit):g}s"
+                            ),
+                        }
+                    )
+                    _checkpoint_results(args.output, records, method_rows)
+                    print("  timed out; checkpoint saved", flush=True)
+                    continue
                 if not result_path.is_file():
                     records.append(
                         {
@@ -836,6 +892,7 @@ def main(argv: list[str] | None = None) -> int:
                             "error": completed.stderr.strip() or completed.stdout.strip(),
                         }
                     )
+                    _checkpoint_results(args.output, records, method_rows)
                     continue
                 payload = json.loads(result_path.read_text(encoding="utf-8"))
                 records.append(payload["record"])
@@ -851,6 +908,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 else:
                     print(f"  failed: {record.get('error', 'unknown error')}", flush=True)
+                _checkpoint_results(args.output, records, method_rows)
 
     summary = _summary_rows(records)
     runs_path = args.output / "scaling_runs.csv"
@@ -858,9 +916,7 @@ def main(argv: list[str] | None = None) -> int:
     summary_path = args.output / "scaling_summary.csv"
     environment_path = args.output / "scaling_environment.json"
     config_path = args.output / "scaling_config.json"
-    _write_csv(runs_path, records, RUN_COLUMNS)
-    _write_csv(methods_path, method_rows)
-    _write_csv(summary_path, summary)
+    _checkpoint_results(args.output, records, method_rows)
     environment_path.write_text(
         json.dumps(_environment(), indent=2) + "\n",
         encoding="utf-8",

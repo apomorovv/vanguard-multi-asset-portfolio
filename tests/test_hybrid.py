@@ -166,7 +166,7 @@ class HybridTests(unittest.TestCase):
                 Preferences(lambda_income=0.5),
                 constraints,
                 backend="osqp",
-                solver_options={"tol": 1e-8, "max_iter": 500_000},
+                solver_options={"tol": 1e-10, "max_iter": 250_000},
             )
         except SolverUnavailableError as exc:
             self.skipTest(str(exc))
@@ -175,6 +175,7 @@ class HybridTests(unittest.TestCase):
         self.assertTrue(result.feasible)
         self.assertEqual(result.breaches, 0)
         self.assertLessEqual(result.max_violation, 1e-7)
+        self.assertEqual(result.metadata["native_tolerance"], 1e-10)
 
     def test_complete_hybrid_run_has_zero_breaches(self) -> None:
         config = HybridConfig(
@@ -244,6 +245,20 @@ class HybridTests(unittest.TestCase):
                 constraint_rows = list(csv.DictReader(handle))
             self.assertTrue(constraint_rows)
             self.assertTrue(all(row["passed"] == "True" for row in constraint_rows))
+
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = write_hybrid_artifacts(
+                run,
+                Path(directory),
+                realized_returns=realized,
+                profile="evaluation",
+            )
+            self.assertIn("summary", artifacts)
+            self.assertIn("quantum_execution", artifacts)
+            self.assertNotIn("allocations", artifacts)
+            self.assertNotIn("problem", artifacts)
+            self.assertFalse((Path(directory) / "plots/constraint_slacks.png").exists())
+            self.assertTrue((Path(directory) / "plots/key_guardrails.png").is_file())
 
     def test_change_windows_are_group_diverse_and_rotate_unheld_assets(self) -> None:
         problem = generate_factor_universe(

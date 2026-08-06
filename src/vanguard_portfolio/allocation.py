@@ -431,21 +431,12 @@ def _bound_arrays(
     return lower, upper
 
 
-def _native_feasibility_tolerance(requested: float, n_turnover: int) -> float:
-    """Choose a native tolerance that survives independent weight validation.
-
-    QP solvers control each turnover-epigraph row separately, while the public
-    validator recomputes ``sum(abs(w - w0))``.  Consequently up to ``n`` small
-    row residuals can accumulate in the reported turnover.  Keep that aggregate
-    comfortably below the validator's 1e-7 tolerance without forcing very large
-    problems below a practical 1e-11 native tolerance.
-    """
-
+def _validated_tolerance(requested: float) -> float:
+    """Return the explicit solver tolerance after basic validation."""
     value = float(requested)
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError("tol must be a finite positive number")
-    aggregate_safe = max(1.0e-11, 1.0e-8 / max(1, int(n_turnover)))
-    return min(value, aggregate_safe)
+    return value
 
 
 def _linear_conic_form(
@@ -618,6 +609,7 @@ def _solve_extended_osqp(
     *,
     tol: float = 1e-8,
     max_iter: int = 100_000,
+    time_limit: float | None = None,
     polish: bool = True,
     verbose: bool = False,
 ) -> SolveResult:
@@ -630,7 +622,11 @@ def _solve_extended_osqp(
     build_start = time.perf_counter()
     data = _extended_qp_data(problem, preferences, constraints)
     matrix, lower, upper, _ = _linear_conic_form(data)
-    native_tol = _native_feasibility_tolerance(tol, data.n_turnover)
+    native_tol = _validated_tolerance(tol)
+    if int(max_iter) <= 0:
+        raise ValueError("max_iter must be positive")
+    if time_limit is not None and float(time_limit) <= 0.0:
+        raise ValueError("time_limit must be positive when supplied")
     build_seconds = time.perf_counter() - build_start
 
     solver = osqp.OSQP()
@@ -640,6 +636,8 @@ def _solve_extended_osqp(
         "eps_rel": native_tol,
         "max_iter": int(max_iter),
     }
+    if time_limit is not None:
+        settings["time_limit"] = float(time_limit)
     setup_start = time.perf_counter()
     try:
         solver.setup(
@@ -697,8 +695,10 @@ def _solve_extended_osqp(
             "dual_residual": float(
                 getattr(solved.info, "dual_res", getattr(solved.info, "dua_res", np.nan))
             ),
+            "rho_updates": int(getattr(solved.info, "rho_updates", 0)),
             "requested_tolerance": float(tol),
             "native_tolerance": native_tol,
+            "time_limit": None if time_limit is None else float(time_limit),
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,
@@ -754,7 +754,7 @@ def _solve_extended_clarabel(
 
     conic_matrix = sparse.vstack(blocks, format="csc")
     conic_rhs = np.concatenate(right_hand_sides)
-    native_tol = _native_feasibility_tolerance(tol, data.n_turnover)
+    native_tol = _validated_tolerance(tol)
     settings = clarabel.DefaultSettings()
     settings.verbose = bool(verbose)
     settings.max_iter = int(max_iter)
@@ -951,7 +951,10 @@ def _solve_extended_gurobi(
         variable_lower, variable_upper = _bound_arrays(data.bounds)
         variable_lower = np.where(np.isfinite(variable_lower), variable_lower, -GRB.INFINITY)
         variable_upper = np.where(np.isfinite(variable_upper), variable_upper, GRB.INFINITY)
-        native_tol = max(1.0e-9, _native_feasibility_tolerance(tol, data.n_turnover))
+        # Gurobi's documented lower bound for these feasibility tolerances is
+        # 1e-9.  Unlike the previous asset-count formula, this clamp is a
+        # backend limitation and is exposed in the result metadata.
+        native_tol = max(1.0e-9, _validated_tolerance(tol))
 
         model = gp.Model("vanguard_extended_allocation")
         model.Params.OutputFlag = int(output)
@@ -1076,7 +1079,7 @@ def _solve_extended(
     if lower_name in {"osqp", "osqp_extended"}:
         accepted = _select_solver_options(
             options,
-            {"tol", "max_iter", "polish", "verbose"},
+            {"tol", "max_iter", "time_limit", "polish", "verbose"},
             backend="OSQP",
         )
         return _solve_extended_osqp(problem, preferences, constraints, **accepted)

@@ -1,4 +1,4 @@
-# Unified Qiskit CPU, GPU, and IBM QPU Installation
+# CPU, GPU, and IBM QPU Installation
 
 ## 1. Supported Single-Environment Stack
 
@@ -21,7 +21,22 @@ is also the supported choice for the RTX A6000 system.
 On macOS, Windows, Linux ARM, and other unsupported GPU-wheel platforms,
 `full` installs `qiskit-aer==0.17.2` instead.
 
-## 2. Why the Previous Split Failed
+## 2. What Each Device Accelerates
+
+| Workload | Device used |
+|---|---|
+| Full-universe factor QP and sparse CVaR | CPU through OSQP/Clarabel/Gurobi |
+| Fixed-support allocation and classical LNS | CPU |
+| XY-QAOA parameter optimization | CPU fixed-weight subspace simulator |
+| Qiskit Aer circuit sampling | GPU when a real CUDA probe succeeds; CPU otherwise |
+| IBM hardware sampling | Selected IBM QPU through Runtime |
+
+The GPU wheel does not make the large-universe OSQP scaling experiment a GPU
+solve. The notebook records the requested and actual Aer device and falls back
+cleanly when CUDA is not visible. Do not infer GPU acceleration from
+`available_devices()` alone; the project verifier executes a real circuit.
+
+## 3. Why the Previous Split Failed
 
 The old installer selected `qiskit-aer-gpu==0.15.1` whenever
 `nvidia-smi` advertised CUDA 12 or newer. That stale CUDA-12 wheel required
@@ -32,7 +47,7 @@ The fix is not to install CPU Aer and GPU Aer together. All Aer distributions
 write the same `qiskit_aer` package tree. The fix is to install exactly one
 current GPU-capable Aer distribution that also supplies CPU execution.
 
-## 3. Clean Installation
+## 4. Clean Installation
 
 Create and activate one environment, then run from the repository root:
 
@@ -49,7 +64,7 @@ After installation, restart the Jupyter kernel and confirm that
 The `full` extra also installs pandas, JupyterLab, and ipykernel because the
 presentation notebook uses them directly.
 
-## 4. Repair an Existing Environment
+## 5. Repair an Existing Environment
 
 Plain pip cannot infer that `qiskit-aer`, `qiskit-aer-gpu`, and
 `qiskit-aer-gpu-cu11` overwrite the same import files. If this environment
@@ -81,7 +96,7 @@ Verify an already installed environment without changing it:
 python scripts/install_environment.py --verify-only
 ```
 
-## 5. Verify From Python
+## 6. Verify From Python
 
 ```python
 from importlib import metadata
@@ -118,7 +133,7 @@ print("IBM Runtime imports:", QiskitRuntimeService, SamplerV2)
 
 A GPU-capable wheel can advertise `"GPU"` even when a container has no CUDA device. The repository verifier therefore submits a real GPU job when `nvidia-smi` sees a device; package names and `available_devices()` alone are not accepted as proof.
 
-## 6. IBM Account Setup
+## 7. IBM Account Setup
 
 Package installation does not authenticate an IBM account. Save the account
 once outside committed files:
@@ -137,7 +152,7 @@ QiskitRuntimeService.save_account(
 
 Never place the token in YAML, notebooks, shell scripts, logs, or Git history.
 
-## 7. Notebook Execution
+## 8. Notebook Execution
 
 Run the presentation notebook from this same kernel. Section 11 checks:
 
@@ -150,23 +165,6 @@ The hardware experiment checkpoints
 `results/presentation_benchmark_suite/ibm_qpu_hardware_validation.csv` after
 every result. With `QPU_RESUME=True`, reruns skip successful jobs and retry
 only missing or failed jobs.
-
-## 8. What the GPU Accelerates
-
-The fixed-weight subspace optimizer still chooses QAOA angles on the CPU. Aer
-CPU/GPU then samples the physical circuit with those angles. For a default
-16-qubit, 7-excitation window, the compact optimization space contains
-
-$$
-\binom{16}{7}=11{,}440
-$$
-
-states, so CPU angle optimization can be faster than launching many small GPU
-kernels. GPU Aer is most useful for wider circuits, higher shot counts, and
-controlled CPU-versus-GPU sampling comparisons.
-
-Aer does not accelerate OSQP, fixed-support allocation, the full-universe
-factor QP, or Gurobi.
 
 ## 9. Troubleshooting
 

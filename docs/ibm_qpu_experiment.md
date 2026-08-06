@@ -276,3 +276,4 @@ Appropriate claims include:
 - the best QPU-guided support improved or did not improve the warm start;
 - hardware depth and error reduced candidate quality relative to ideal
   simulation.
+

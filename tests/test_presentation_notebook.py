@@ -25,12 +25,31 @@ def test_qpu_and_following_notebook_cells_compile() -> None:
         compile(source, f"{NOTEBOOK.name}:cell-{index}", "exec")
 
 
+def test_all_notebook_cells_compile_and_outputs_are_clean() -> None:
+    notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    for index, cell in enumerate(notebook["cells"]):
+        if cell.get("cell_type") != "code":
+            continue
+        assert cell.get("execution_count") is None
+        assert cell.get("outputs") == []
+        compile(
+            "".join(cell.get("source", ())),
+            f"{NOTEBOOK.name}:cell-{index}",
+            "exec",
+        )
+
+
 def test_notebook_uses_unified_environment_and_resumable_qpu_jobs() -> None:
     text = NOTEBOOK.read_text(encoding="utf-8")
     assert 'python -m pip install -e \\".[full]\\"' in text
     assert "qiskit-aer-gpu-cu11" in text
     assert "QPU_RESUME = True" in text
     assert "QPU_FAIL_FAST = False" in text
+    assert "RUN_IBM_QPU = False" in text
     assert "Skipping completed QPU job" in text
+    assert "RELAXATION_TOL = 1.0e-10" in text
+    assert "ALLOCATION_TOL = 1.0e-8" in text
+    assert "RUN_SCALING_STRETCH = False" in text
+    assert "profile=\\\"evaluation\\\"" in text
     assert "scaling_20k" not in text
     assert "Reopen under a separate IBM Runtime kernel" not in text

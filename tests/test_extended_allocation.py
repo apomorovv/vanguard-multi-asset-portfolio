@@ -82,7 +82,7 @@ class ExtendedAllocationTests(unittest.TestCase):
                 Preferences(lambda_income=0.5),
                 constraints,
                 backend="osqp",
-                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+                solver_options={"tol": 1.0e-10, "max_iter": 250_000},
             )
         except SolverUnavailableError as exc:
             self.skipTest(str(exc))
@@ -106,6 +106,8 @@ class ExtendedAllocationTests(unittest.TestCase):
         self.assertTrue(report.feasible, report.details)
         self.assertEqual(result.method, "osqp_extended_qp")
         self.assertEqual(result.metadata["cvar_scenarios"], 250)
+        self.assertEqual(result.metadata["requested_tolerance"], 1.0e-10)
+        self.assertEqual(result.metadata["native_tolerance"], 1.0e-10)
 
     def test_osqp_fixed_support_enforces_full_sparse_constraints(self) -> None:
         problem, constraints = build_extended_case(scenario_count=250)
@@ -115,7 +117,7 @@ class ExtendedAllocationTests(unittest.TestCase):
                 Preferences(lambda_income=0.5),
                 constraints,
                 backend="osqp",
-                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+                solver_options={"tol": 1.0e-10, "max_iter": 250_000},
             )
             support = tuple(np.flatnonzero(problem.w0 > 1.0e-12).tolist())
             evaluated = oracle.evaluate(support)
@@ -139,7 +141,7 @@ class ExtendedAllocationTests(unittest.TestCase):
                 preferences,
                 constraints,
                 backend="osqp",
-                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+                solver_options={"tol": 1.0e-10, "max_iter": 250_000},
             )
             clarabel_result = solve_relaxation(
                 problem,
@@ -167,7 +169,7 @@ class ExtendedAllocationTests(unittest.TestCase):
                 preferences,
                 constraints,
                 backend="osqp",
-                solver_options={"tol": 1.0e-8, "max_iter": 250_000},
+                solver_options={"tol": 1.0e-10, "max_iter": 250_000},
             )
             gurobi_result = solve_relaxation(
                 problem,

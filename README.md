@@ -133,7 +133,7 @@ If the environment previously contained another Aer distribution or Qiskit
 python scripts/install_environment.py
 ```
 
-See [GPU installation](docs/gpu_installation.md) and the
+See the unified [CPU, GPU, and QPU installation guide](docs/installation.md) and the
 [IBM QPU protocol](docs/ibm_qpu_experiment.md).
 
 Gurobi requires a valid license. IBM credentials are managed by
@@ -178,109 +178,62 @@ operates only on the adaptive 16-asset change window. This is not a
 
 ### Scaling study
 
-The scaling runner accepts the following relevant options:
-
-```text
---sizes
---cardinality
---window-size
---backend
---repetitions
---quantum
---aer-gpu
---gurobi
---seed
---output
-```
-
-The script does not currently accept `--quantum-backend`, `--no-gurobi`, or
-`--overwrite`.
-
-A presentation-oriented GPU sweep is:
+The default study repeats the presentation-quality core from 250 through 20,000
+assets. Solver tolerances are explicit: the full-universe guide relaxation and
+the support-reduced final allocation have separate command-line options. Each
+isolated worker is time-limited and the runner checkpoints after every case.
 
 ```bash
 python scripts/run_hybrid_scaling.py \
-  --sizes 250 500 1000 2000 5000 10000 \
+  --sizes 250 500 1000 2000 5000 10000 20000 \
+  --repetitions 3 \
   --cardinality 50 \
   --window-size 16 \
   --backend osqp \
-  --repetitions 3 \
+  --relaxation-tolerance 1e-10 \
+  --relaxation-max-iter 250000 \
+  --relaxation-time-limit 300 \
+  --allocation-tolerance 1e-8 \
+  --allocation-max-iter 100000 \
+  --case-time-limit 360 \
   --quantum \
-  --aer-gpu \
-  --seed 20260802 \
+  --quantum-backend subspace \
+  --no-gurobi \
   --output results/hybrid_scaling
 ```
 
-This benchmark keeps the quantum window fixed at 16 variables while increasing
-the global asset universe. It is designed to measure whether the decomposition
-scales independently of quantum-window width.
+Use `--resume` to continue a partial directory or `--overwrite` to replace
+it. The output is deliberately compact: raw run/method CSVs, one summary CSV,
+environment/config manifests, and one four-panel validity/scalability/quantum
+figure.
 
-Run the 20,000-asset case separately as a stretch experiment rather than as
-three additional trials in the main sweep:
+A verified Aer GPU can be selected with `--quantum-backend aer_gpu`. This
+accelerates only circuit sampling; the full-universe OSQP factor solve and the
+fixed-weight parameter optimizer remain CPU workloads. Benchmark the identical
+instance before claiming a GPU speedup.
+
+Large-universe points should be separate, one-repetition stretch tests:
 
 ```bash
 python scripts/run_hybrid_scaling.py \
-  --sizes 20000 \
-  --cardinality 50 \
-  --window-size 16 \
-  --backend osqp \
+  --sizes 35000 50000 \
   --repetitions 1 \
-  --quantum \
-  --aer-gpu \
-  --seed 20260802 \
-  --output results/hybrid_scaling_20000
-```
-
-The 20,000-asset case can require substantial system RAM. Its main risk is the
-global portfolio-data representation and associated temporary arrays, not the
-16-qubit Aer circuit.
-
-To include Gurobi comparisons, pass `--gurobi`. For presentation-quality
-certification, restrict this comparison to smaller and medium instances:
-
-```bash
-python scripts/run_hybrid_scaling.py \
-  --sizes 250 500 1000 2000 \
   --cardinality 50 \
   --window-size 16 \
   --backend osqp \
-  --repetitions 3 \
+  --relaxation-tolerance 1e-10 \
+  --relaxation-time-limit 300 \
+  --case-time-limit 360 \
   --quantum \
-  --aer-gpu \
-  --gurobi \
-  --seed 20260802 \
-  --output results/hybrid_scaling_certified
+  --quantum-backend subspace \
+  --no-gurobi \
+  --allow-failures \
+  --output results/hybrid_scaling_stretch
 ```
 
-Larger instances demonstrate the scalable hybrid-search path and must not be
-described as globally certified unless Gurobi returns a valid bound and a
-reported optimality gap.
-
-A quick portable smoke test, using the internal fixed-cardinality CPU subspace
-sampler, is:
-
-```bash
-python scripts/run_hybrid_scaling.py \
-  --sizes 250 500 1000 2000 \
-  --cardinality 50 \
-  --window-size 16 \
-  --backend osqp \
-  --repetitions 1 \
-  --quantum \
-  --seed 20260802 \
-  --output results/hybrid_scaling_quick
-```
-
-Omitting `--aer-gpu` leaves the quantum experiment on the portable subspace
-backend. Omitting `--gurobi` disables Gurobi reference solves.
-
-The scaling script currently has no `--overwrite` option. Use a new output
-directory or move an existing one before rerunning:
-
-```bash
-mv results/hybrid_scaling \
-  "results/hybrid_scaling_$(date +%Y%m%d_%H%M%S)"
-```
+A timed-out case is recorded rather than allowed to run indefinitely. Larger
+instances demonstrate the scalable hybrid-search path and must not be described
+as globally certified unless an exact solver returns a valid bound and gap.
 
 ### IBM QPU demonstration
 
@@ -306,10 +259,14 @@ hybrid:
   window_size: 12
   held_fraction: 0.42
 
-  allocation_backend: scipy
+  allocation_backend: osqp
   allocation_options:
     tol: 1.0e-8
-    max_iter: 3000
+    max_iter: 100000
+  relaxation_options:
+    tol: 1.0e-10
+    max_iter: 250000
+    time_limit: 180
 
   run_quantum: true
   run_penalty_qaoa: false
@@ -328,7 +285,7 @@ hybrid:
     backend: ibm_runtime
     ibm_backend: REPLACE_WITH_ACCESSIBLE_BACKEND
     maximum_subspace_states: 400000
-    top_candidates: 128
+    top_candidates: 32
     transpile_optimization_level: 3
 ```
 

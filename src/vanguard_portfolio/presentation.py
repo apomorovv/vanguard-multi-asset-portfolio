@@ -6,9 +6,10 @@ import csv
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -24,7 +25,6 @@ from .metrics import backtest_metrics, wealth_path
 from .schemas import SolveResult
 from .topology import market_communities
 from .validation import validate_weights
-
 
 COLORS = ["#0B5CAD", "#00A6A6", "#F28E2B", "#7B61A8", "#D1495B", "#5C677D"]
 VALIDATION_TOLERANCE = 1e-7
@@ -466,7 +466,7 @@ def plot_key_guardrails(run: HybridRun, path: Path) -> dict[str, Path]:
             (
                 "Exact holdings",
                 check,
-                f"{int(round(check.lhs))} {check.sense} {int(round(check.rhs))}",
+                f"{round(check.lhs)} {check.sense} {round(check.rhs)}",
             )
         )
     if "max_turnover" in checks:
@@ -503,7 +503,7 @@ def plot_key_guardrails(run: HybridRun, path: Path) -> dict[str, Path]:
     group_limits = [
         check
         for name, check in checks.items()
-        if name.startswith("group_lower:") or name.startswith("group_upper:")
+        if name.startswith(("group_lower:", "group_upper:"))
     ]
     if group_limits:
         check = min(group_limits, key=normalized_headroom)
@@ -754,9 +754,9 @@ def plot_correlation_communities(run: HybridRun, path: Path) -> dict[str, Path]:
     }
     sampled: list[int] = []
     while len(sampled) < display_limit and any(buckets.values()):
-        for label in buckets:
-            if buckets[label] and len(sampled) < display_limit:
-                sampled.append(int(buckets[label].pop(0)))
+        for values in buckets.values():
+            if values and len(sampled) < display_limit:
+                sampled.append(int(values.pop(0)))
     displayed = np.asarray(sorted(sampled, key=lambda index: labels[index]), dtype=int)
     correlation = run.problem.correlation_submatrix(displayed)
     fig, ax = plt.subplots(figsize=(7.0, 6.0))
@@ -811,31 +811,42 @@ def write_hybrid_artifacts(
     output_directory: str | Path,
     *,
     realized_returns: np.ndarray | None = None,
+    profile: str = "full",
 ) -> dict[str, Path]:
-    """Write a complete, auditable result package for the demo and presentation."""
+    """Write an auditable result package.
+
+    ``profile="evaluation"`` keeps the compact tables and figures used in the
+    benchmark notebook.  ``profile="full"`` preserves the exhaustive research
+    package for downstream analysis and backwards compatibility.
+    """
+    if profile not in {"full", "evaluation"}:
+        raise ValueError("profile must be 'full' or 'evaluation'")
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     plots = output / "plots"
     artifacts: dict[str, Path] = {}
 
     artifacts["summary"] = _write_csv(output / "hybrid_summary.csv", run.summary_records())
-    allocation_rows: list[dict[str, Any]] = []
-    for result in run.all_results():
-        for index, asset in enumerate(run.problem.asset_names):
-            allocation_rows.append(
-                {
-                    "method": result.method,
-                    "stage": result.metadata.get("stage", ""),
-                    "iteration": result.metadata.get("iteration", ""),
-                    "asset": asset,
-                    "group": run.problem.group_names[run.problem.asset_group[index]],
-                    "weight": result.weights[index],
-                    "current_weight": run.problem.w0[index],
-                    "change": result.weights[index] - run.problem.w0[index],
-                    "selected": int(result.weights[index] > 1e-8),
-                }
-            )
-    artifacts["allocations"] = _write_csv(output / "allocation_weights.csv", allocation_rows)
+    if profile == "full":
+        allocation_rows: list[dict[str, Any]] = []
+        for result in run.all_results():
+            for index, asset in enumerate(run.problem.asset_names):
+                allocation_rows.append(
+                    {
+                        "method": result.method,
+                        "stage": result.metadata.get("stage", ""),
+                        "iteration": result.metadata.get("iteration", ""),
+                        "asset": asset,
+                        "group": run.problem.group_names[run.problem.asset_group[index]],
+                        "weight": result.weights[index],
+                        "current_weight": run.problem.w0[index],
+                        "change": result.weights[index] - run.problem.w0[index],
+                        "selected": int(result.weights[index] > 1e-8),
+                    }
+                )
+        artifacts["allocations"] = _write_csv(
+            output / "allocation_weights.csv", allocation_rows
+        )
 
     report = validate_weights(
         run.best.weights,
@@ -858,25 +869,30 @@ def write_hybrid_artifacts(
     artifacts["constraints"] = _write_csv(output / "constraint_checks.csv", constraint_rows)
     artifacts["timeline"] = _write_csv(output / "objective_timeline.csv", run.timeline)
 
-    window_rows: list[dict[str, Any]] = []
-    communities = (
-        market_communities(run.problem, seed=run.config.seed)
-        if run.config.use_topology
-        else None
-    )
-    for iteration, window in enumerate(run.windows):
-        for index in window.indices:
-            window_rows.append(
-                {
-                    "iteration": iteration,
-                    "asset": run.problem.asset_names[index],
-                    "asset_index": index,
-                    "role": "weak_held" if index in window.weak_held else "promising_unheld",
-                    "group": run.problem.group_names[run.problem.asset_group[index]],
-                    "community": "" if communities is None else int(communities[index]),
-                }
-            )
-    artifacts["windows"] = _write_csv(output / "change_windows.csv", window_rows)
+    if profile == "full":
+        window_rows: list[dict[str, Any]] = []
+        communities = (
+            market_communities(run.problem, seed=run.config.seed)
+            if run.config.use_topology
+            else None
+        )
+        for iteration, window in enumerate(run.windows):
+            for index in window.indices:
+                window_rows.append(
+                    {
+                        "iteration": iteration,
+                        "asset": run.problem.asset_names[index],
+                        "asset_index": index,
+                        "role": (
+                            "weak_held"
+                            if index in window.weak_held
+                            else "promising_unheld"
+                        ),
+                        "group": run.problem.group_names[run.problem.asset_group[index]],
+                        "community": "" if communities is None else int(communities[index]),
+                    }
+                )
+        artifacts["windows"] = _write_csv(output / "change_windows.csv", window_rows)
 
     quantum_execution_rows = _quantum_execution_rows(run)
     if quantum_execution_rows:
@@ -898,6 +914,7 @@ def write_hybrid_artifacts(
 
     diagnostics = {
         "runtime_seconds": run.runtime,
+        "artifact_profile": profile,
         "oracle_calls": run.oracle_calls,
         "oracle_cache_hits": run.oracle_cache_hits,
         "skipped": run.skipped,
@@ -925,25 +942,40 @@ def write_hybrid_artifacts(
         encoding="utf-8",
     )
     artifacts["diagnostics"] = diagnostics_path
-    problem_path = output / "problem.json"
-    problem_path.write_text(json.dumps(run.problem.to_dict(), indent=2) + "\n", encoding="utf-8")
-    artifacts["problem"] = problem_path
+    if profile == "full":
+        problem_path = output / "problem.json"
+        problem_path.write_text(
+            json.dumps(run.problem.to_dict(), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        artifacts["problem"] = problem_path
 
-    plot_functions = [
-        (plot_architecture, "architecture.png"),
-        (lambda path: plot_allocations(run, path), "allocation_comparison.png"),
-        (lambda path: plot_objective_and_runtime(run, path), "objective_runtime.png"),
-        (lambda path: plot_risk_return(run, path), "risk_return.png"),
-        (lambda path: plot_objective_timeline(run, path), "objective_timeline.png"),
-        (lambda path: plot_key_guardrails(run, path), "key_guardrails.png"),
-        (lambda path: plot_constraint_slacks(run, path), "constraint_slacks.png"),
-        (lambda path: plot_group_exposure(run, path), "group_exposure.png"),
-        (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),
-        (lambda path: plot_quantum_cardinality(run, path), "quantum_cardinality.png"),
-        (lambda path: plot_quantum_resources(run, path), "quantum_resources.png"),
-        (lambda path: plot_quantum_timing(run, path), "quantum_timing.png"),
-        (lambda path: plot_correlation_communities(run, path), "correlation_communities.png"),
-    ]
+    if profile == "evaluation":
+        plot_functions = [
+            (lambda path: plot_objective_and_runtime(run, path), "objective_runtime.png"),
+            (lambda path: plot_key_guardrails(run, path), "key_guardrails.png"),
+            (lambda path: plot_group_exposure(run, path), "group_exposure.png"),
+            (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),
+        ]
+    else:
+        plot_functions = [
+            (plot_architecture, "architecture.png"),
+            (lambda path: plot_allocations(run, path), "allocation_comparison.png"),
+            (lambda path: plot_objective_and_runtime(run, path), "objective_runtime.png"),
+            (lambda path: plot_risk_return(run, path), "risk_return.png"),
+            (lambda path: plot_objective_timeline(run, path), "objective_timeline.png"),
+            (lambda path: plot_key_guardrails(run, path), "key_guardrails.png"),
+            (lambda path: plot_constraint_slacks(run, path), "constraint_slacks.png"),
+            (lambda path: plot_group_exposure(run, path), "group_exposure.png"),
+            (lambda path: plot_factor_exposure(run, path), "factor_exposure.png"),
+            (lambda path: plot_quantum_cardinality(run, path), "quantum_cardinality.png"),
+            (lambda path: plot_quantum_resources(run, path), "quantum_resources.png"),
+            (lambda path: plot_quantum_timing(run, path), "quantum_timing.png"),
+            (
+                lambda path: plot_correlation_communities(run, path),
+                "correlation_communities.png",
+            ),
+        ]
     for function, filename in plot_functions:
         artifacts.update(function(plots / filename))
     if realized_returns is not None:
@@ -968,8 +1000,10 @@ def write_hybrid_artifacts(
         f"- Objective: `{run.best.objective:.10g}`",
         f"- Expected return: `{float(best_row['expected_return']):.3%}`",
         f"- Volatility: `{float(best_row['volatility']):.3%}`",
-        f"- L1 turnover: `{float(best_row['turnover']):.3%}` "
-        f"(one-way convention: `{0.5 * float(best_row['turnover']):.3%}`)",
+        (
+            f"- L1 turnover: `{float(best_row['turnover']):.3%}` "
+            f"(one-way convention: `{0.5 * float(best_row['turnover']):.3%}`)"
+        ),
         f"- Selected assets: `{int(best_row['support_size'])}`",
         f"- Hard-constraint breaches: **{run.best.breaches}**",
         f"- Total runtime: `{run.runtime:.3f} s`",
@@ -977,20 +1011,26 @@ def write_hybrid_artifacts(
         "",
         "## Interpretation",
         "",
-        "The continuous relaxation supplies a lower bound and candidate scores. "
-        "Classical LNS and XY-QAOA search the same fixed-cardinality windows. Every "
-        "sampled support is reallocated with the complete continuous financial model "
-        "and independently validated. Quantum output is therefore a proposal, never "
-        "an unverified final portfolio.",
+        (
+            "The continuous relaxation supplies a lower bound and candidate scores. "
+            "Classical LNS and XY-QAOA search the same fixed-cardinality windows. Every "
+            "sampled support is reallocated with the complete continuous financial model "
+            "and independently validated. Quantum output is therefore a proposal, never "
+            "an unverified final portfolio."
+        ),
         "",
-        "XY-QAOA angles are optimized by the exact fixed-Hamming-weight CPU subspace "
-        "simulator. When selected, Aer GPU or IBM Runtime executes and samples the "
-        "corresponding Qiskit circuit; the portable subspace backend samples on CPU. "
-        "This split is intentional for small change windows and is reported explicitly "
-        "in `quantum_execution.csv`.",
+        (
+            "XY-QAOA angles are optimized by the exact fixed-Hamming-weight CPU subspace "
+            "simulator. When selected, Aer GPU or IBM Runtime executes and samples the "
+            "corresponding Qiskit circuit; the portable subspace backend samples on CPU. "
+            "This split is intentional for small change windows and is reported explicitly "
+            "in `quantum_execution.csv`."
+        ),
         "",
-        "A hybrid result is globally heuristic even when its fixed-support allocation QP "
-        "is solved optimally. Lower objective values are better.",
+        (
+            "A hybrid result is globally heuristic even when its fixed-support allocation QP "
+            "is solved optimally. Lower objective values are better."
+        ),
         "",
         "## Quantum results",
         "",

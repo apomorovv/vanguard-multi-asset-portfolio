@@ -25,12 +25,18 @@ from .schemas import (
 )
 
 
-def _native_osqp_tolerance(requested: float, n_turnover: int) -> float:
+def _validated_tolerance(requested: float) -> float:
+    """Return the caller's tolerance after basic validation.
+
+    Solver precision is a user-facing experiment parameter.  In particular,
+    do not tighten it as a function of the asset count: that made otherwise
+    identical scaling runs take radically different numerical paths.
+    """
+
     value = float(requested)
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError("tol must be a finite positive number")
-    aggregate_safe = max(1.0e-11, 1.0e-8 / max(1, int(n_turnover)))
-    return min(value, aggregate_safe)
+    return value
 
 
 def _linear_program_start(problem: PortfolioProblem, data: QPData) -> np.ndarray:
@@ -157,6 +163,7 @@ def solve_continuous_osqp(
     *,
     tol: float = 1e-8,
     max_iter: int = 100_000,
+    time_limit: float | None = None,
 ) -> SolveResult:
     """Solve the matrix-form QP with the optional open-source OSQP backend."""
     try:
@@ -169,7 +176,11 @@ def solve_continuous_osqp(
     build_start = time.perf_counter()
     data = build_continuous_qp(problem, preferences)
     build_seconds = time.perf_counter() - build_start
-    native_tol = _native_osqp_tolerance(tol, data.n_turnover)
+    native_tol = _validated_tolerance(tol)
+    if int(max_iter) <= 0:
+        raise ValueError("max_iter must be positive")
+    if time_limit is not None and float(time_limit) <= 0.0:
+        raise ValueError("time_limit must be positive when supplied")
     solver = osqp.OSQP()
     settings: dict[str, Any] = {
         "verbose": False,
@@ -177,6 +188,8 @@ def solve_continuous_osqp(
         "eps_rel": native_tol,
         "max_iter": int(max_iter),
     }
+    if time_limit is not None:
+        settings["time_limit"] = float(time_limit)
     setup_start = time.perf_counter()
     try:
         solver.setup(
@@ -234,8 +247,10 @@ def solve_continuous_osqp(
             "dual_residual": float(
                 getattr(solved.info, "dual_res", getattr(solved.info, "dua_res", np.nan))
             ),
+            "rho_updates": int(getattr(solved.info, "rho_updates", 0)),
             "requested_tolerance": float(tol),
             "native_tolerance": native_tol,
+            "time_limit": None if time_limit is None else float(time_limit),
             "model_build_seconds": build_seconds,
             "solver_setup_seconds": setup_seconds,
             "solve_seconds": solve_seconds,
