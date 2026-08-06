@@ -113,22 +113,28 @@ Classical QP and MIQP stack:
 python -m pip install -e ".[all-solvers,test]"
 ```
 
-Portable CPU Aer and IBM Runtime:
+Complete CPU/GPU/QPU notebook stack in one clean environment:
 
 ```bash
 python -m pip install -e ".[full]"
+python -m pip check
+python scripts/install_environment.py --verify-only
 ```
 
-On an NVIDIA system, use the compatibility-aware installer:
+On Linux x86_64, `full` installs the CUDA-11 build of Aer 0.17.2. That
+single distribution contains both CPU and GPU simulators, works with newer
+NVIDIA drivers, and shares Qiskit 2.5.1 with IBM Runtime 0.48.0. Other
+platforms receive CPU Aer.
+
+If the environment previously contained another Aer distribution or Qiskit
+1.4, repair it once before restarting Jupyter:
 
 ```bash
-python scripts/install_environment.py --profile full
+python scripts/install_environment.py
 ```
 
-The CUDA 12 Aer wheel used by the project requires a Qiskit 1.4 environment,
-whereas current IBM Runtime uses Qiskit 2.x. Keep the Aer GPU and IBM Runtime
-profiles in separate environments. See [GPU installation](docs/gpu_installation.md)
-and [IBM QPU protocol](docs/ibm_qpu_experiment.md).
+See [GPU installation](docs/gpu_installation.md) and the
+[IBM QPU protocol](docs/ibm_qpu_experiment.md).
 
 Gurobi requires a valid license. IBM credentials are managed by
 `qiskit-ibm-runtime` and must not be committed to the repository.
@@ -278,9 +284,9 @@ mv results/hybrid_scaling \
 
 ### IBM QPU demonstration
 
-Use a separate environment for IBM Runtime. The CUDA-12 Aer GPU environment
-uses a Qiskit version that may not be compatible with the current IBM Runtime
-stack.
+Use the same `full` environment as CPU and GPU simulation. Configure the IBM
+account once with `QiskitRuntimeService.save_account`; never place a token in
+the repository or notebook.
 
 The current `run_hybrid.py` command does not accept quantum backend, IBM
 backend, window size, iteration count, or shot count as command-line

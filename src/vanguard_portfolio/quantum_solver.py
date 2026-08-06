@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import combinations
 from math import comb
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 from scipy.optimize import minimize
@@ -394,11 +394,23 @@ def _sample_ibm_runtime(
         from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
     except ImportError as exc:
         raise SolverUnavailableError(
-            "IBM Runtime packages are not installed; install the 'ibm-runtime' extra"
+            "IBM Runtime packages are not installed; install the 'full' extra"
         ) from exc
     sampler_start = time.perf_counter()
-    service = QiskitRuntimeService()
-    backend = service.backend(backend_name)
+    try:
+        service = QiskitRuntimeService()
+    except Exception as exc:
+        raise SolverUnavailableError(
+            "IBM Runtime is installed, but no usable saved account was found. "
+            "Configure it once with QiskitRuntimeService.save_account(...), "
+            f"then retry: {exc}"
+        ) from exc
+    try:
+        backend = service.backend(backend_name)
+    except Exception as exc:
+        raise SolverUnavailableError(
+            f"IBM backend {backend_name!r} is not accessible from the active account: {exc}"
+        ) from exc
     backend_version = str(getattr(backend, "backend_version", ""))
     calibration_timestamp = ""
     try:
@@ -410,13 +422,13 @@ def _sample_ibm_runtime(
                 if hasattr(last_update, "isoformat")
                 else str(last_update)
             )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        calibration_timestamp = ""
     try:
         backend_status = backend.status()
         pending_jobs = int(getattr(backend_status, "pending_jobs", -1))
         operational = bool(getattr(backend_status, "operational", True))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pending_jobs = -1
         operational = True
     measured = circuit.copy()
@@ -433,14 +445,7 @@ def _sample_ibm_runtime(
     job = sampler.run([isa_circuit], shots=int(shots))
     publication = job.result()[0]
     execution_seconds = time.perf_counter() - execution_start
-    qpu_seconds = None
-    try:
-        metrics = job.metrics()
-        usage = metrics.get("usage", metrics.get("usage_estimation", {}))
-        if isinstance(usage, dict) and usage.get("quantum_seconds") is not None:
-            qpu_seconds = float(usage["quantum_seconds"])
-    except Exception:
-        pass
+    qpu_seconds = _runtime_quantum_seconds(job)
     decode_start = time.perf_counter()
     raw = publication.data.meas.get_counts()
     counts = _decode_qiskit_counts(raw, circuit.num_qubits)
@@ -475,6 +480,38 @@ def _sample_ibm_runtime(
         "count_decode_seconds": decode_seconds,
         "sampler_total_seconds": time.perf_counter() - sampler_start,
     }
+
+
+def _runtime_quantum_seconds(job: Any) -> float | None:
+    """Read QPU usage across supported RuntimeJobV2 response shapes."""
+    try:
+        usage_estimation = getattr(job, "usage_estimation", None)
+        if callable(usage_estimation):
+            usage_estimation = usage_estimation()
+        if isinstance(usage_estimation, dict):
+            value = usage_estimation.get("quantum_seconds")
+            if value is not None:
+                return float(value)
+    except Exception:  # noqa: BLE001
+        usage_estimation = None
+
+    try:
+        metrics = job.metrics()
+        if isinstance(metrics, dict):
+            for key in ("usage", "usage_estimation"):
+                usage = metrics.get(key)
+                if isinstance(usage, dict) and usage.get("quantum_seconds") is not None:
+                    return float(usage["quantum_seconds"])
+    except Exception:  # noqa: BLE001
+        metrics = {}
+
+    try:
+        usage = job.usage()
+        if usage is not None:
+            return float(usage)
+    except Exception:  # noqa: BLE001
+        usage = None
+    return None
 
 
 def solve_xy_qaoa(

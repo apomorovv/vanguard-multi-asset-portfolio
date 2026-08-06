@@ -7,7 +7,7 @@ name = "vanguard-multi-asset-portfolio"
 version = "1.1.0"
 description = "Constraint-safe classical and XY-QAOA hybrid multi-asset portfolio optimization"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = {text = "MIT"}
 authors = [{name = "WISER Vanguard challenge team"}]
 dependencies = [
@@ -22,24 +22,25 @@ qp = ["osqp>=0.6.3", "cvxpy>=1.4", "clarabel>=0.9"]
 mip = ["cvxpy>=1.4", "pyscipopt>=5.0"]
 gurobi = ["gurobipy>=11.0"]
 
-# Qiskit publishes separate Aer distributions. The CUDA 12 wheel currently
-# remains at Aer 0.15.1, whose Python layer relies on APIs retained by Qiskit
-# 1.4 but removed in Qiskit 2.0. Keep that pair pinned together. CUDA 11 and
-# CPU Aer have current 0.17.2 wheels and can use Qiskit 2.x.
-quantum = ["qiskit>=2.0,<3", "qiskit-aer==0.17.2"]
-quantum-cpu = ["qiskit>=2.0,<3", "qiskit-aer==0.17.2"]
+# IBM Runtime 0.48 requires Qiskit >=2.3.  Aer 0.17.2 is the newest GPU
+# release compatible with that line.  The CUDA-11 wheel runs on newer NVIDIA
+# drivers and contains both CPU and GPU simulator implementations, so Linux
+# x86_64 needs exactly that one Aer distribution rather than CPU and GPU Aer
+# packages installed together.
+quantum = ["qiskit==2.5.1", "qiskit-aer==0.17.2"]
+quantum-cpu = ["qiskit==2.5.1", "qiskit-aer==0.17.2"]
 quantum-gpu = [
-  "qiskit==1.4.6",
-  "qiskit-aer-gpu==0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit==2.5.1",
+  "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-aer==0.17.2; platform_system != 'Linux' or platform_machine != 'x86_64'",
 ]
 quantum-gpu-cu11 = [
-  "qiskit>=2.0,<3",
+  "qiskit==2.5.1",
   "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-aer==0.17.2; platform_system != 'Linux' or platform_machine != 'x86_64'",
 ]
 
-# IBM Runtime follows the current Qiskit line. Install this separately from the
-# CUDA 12 simulator environment, whose only available wheel requires Qiskit 1.4.
-ibm-runtime = ["qiskit-ibm-runtime>=0.40"]
+ibm-runtime = ["qiskit==2.5.1", "qiskit-ibm-runtime==0.48.0"]
 app = ["streamlit>=1.40", "plotly>=5.24"]
 all-solvers = [
   "osqp>=0.6.3",
@@ -58,32 +59,42 @@ dev = [
   "ruff>=0.6",
 ]
 
-# Portable full install: current Qiskit, CPU Aer, and IBM Runtime.
+# One-environment install.  On Linux x86_64 the GPU-capable Aer distribution
+# also provides the CPU simulator.  Other platforms receive portable CPU Aer.
 full = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit>=2.0,<3",
-  "qiskit-aer==0.17.2",
-  "qiskit-ibm-runtime>=0.40",
+  "qiskit==2.5.1",
+  "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-aer==0.17.2; platform_system != 'Linux' or platform_machine != 'x86_64'",
+  "qiskit-ibm-runtime==0.48.0",
+  "pandas>=2.2",
+  "ipykernel>=6.29",
+  "jupyterlab>=4.2",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
   "pytest-cov>=5.0",
 ]
 
-# CUDA 12 local-simulator stack. IBM Runtime is intentionally excluded because
-# the CUDA 12 Aer wheel requires Qiskit 1.4 while current Runtime uses Qiskit 2.
+# Backward-compatible aliases.  Both now install the same Runtime-compatible
+# GPU stack as ``full``; the stale CUDA-12/Qiskit-1.4 combination is removed.
 full-gpu = [
   "osqp>=0.6.3",
   "cvxpy>=1.4",
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit==1.4.6",
-  "qiskit-aer-gpu==0.15.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit==2.5.1",
+  "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-aer==0.17.2; platform_system != 'Linux' or platform_machine != 'x86_64'",
+  "qiskit-ibm-runtime==0.48.0",
+  "pandas>=2.2",
+  "ipykernel>=6.29",
+  "jupyterlab>=4.2",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
@@ -96,8 +107,13 @@ full-gpu-cu11 = [
   "clarabel>=0.9",
   "pyscipopt>=5.0",
   "gurobipy>=11.0",
-  "qiskit>=2.0,<3",
+  "qiskit==2.5.1",
   "qiskit-aer-gpu-cu11==0.17.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+  "qiskit-aer==0.17.2; platform_system != 'Linux' or platform_machine != 'x86_64'",
+  "qiskit-ibm-runtime==0.48.0",
+  "pandas>=2.2",
+  "ipykernel>=6.29",
+  "jupyterlab>=4.2",
   "streamlit>=1.40",
   "plotly>=5.24",
   "pytest>=8.0",
