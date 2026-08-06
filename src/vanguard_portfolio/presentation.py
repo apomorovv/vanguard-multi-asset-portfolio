@@ -6,7 +6,7 @@ import csv
 import json
 import os
 import tempfile
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -18,6 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from .allocation import solve_relaxation
 from .classical import write_artifact_manifest
 from .hybrid import HybridRun
 from .metrics import backtest_metrics, wealth_path
@@ -66,6 +67,48 @@ def _unique_method_labels(methods: Iterable[str]) -> list[str]:
         seen[name] = seen.get(name, 0) + 1
         labels.append(f"{name} (window {seen[name]})" if totals[name] > 1 else name)
     return labels
+
+
+def _mean_variance_frontier(
+    run: HybridRun,
+    num_points: int = 25,
+    span: float = 25.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trace the classical mean-variance frontier for a reference curve.
+
+    Uses the same constraints, backend, and solver options as the run's own
+    continuous relaxation -- i.e. everything except the exact-cardinality
+    restriction, which ``solve_relaxation`` already relaxes. Sweeping
+    ``lambda_risk`` around the run's own operating point produces the curve
+    that every discrete candidate on this chart is implicitly being judged
+    against: how much return/risk the cardinality constraint costs, and how
+    close each discrete method gets to what's achievable without it.
+    """
+    base = run.preferences
+    center = max(abs(float(base.lambda_risk)), 1e-6)
+    grid = np.geomspace(center / span, center * span, int(num_points))
+    volatilities: list[float] = []
+    returns: list[float] = []
+    for lambda_risk in grid:
+        preferences = replace(base, lambda_risk=float(lambda_risk))
+        try:
+            result = solve_relaxation(
+                run.problem,
+                preferences,
+                run.constraints,
+                backend=run.config.allocation_backend,
+                solver_options=dict(run.config.allocation_options),
+            )
+        except Exception:
+            continue
+        if not result.success:
+            continue
+        volatilities.append(float(result.metrics["volatility"]))
+        returns.append(float(result.metrics["expected_return"]))
+    if not volatilities:
+        return np.asarray([]), np.asarray([])
+    order = np.argsort(volatilities)
+    return np.asarray(volatilities)[order], np.asarray(returns)[order]
 
 
 def _quantum_execution_rows(run: HybridRun) -> list[dict[str, Any]]:
@@ -320,6 +363,19 @@ def plot_objective_and_runtime(run: HybridRun, path: Path) -> dict[str, Path]:
 def plot_risk_return(run: HybridRun, path: Path) -> dict[str, Path]:
     results = _best_methods(run.all_results())
     fig, ax = plt.subplots(figsize=(7.6, 5.5))
+
+    frontier_volatility, frontier_return = _mean_variance_frontier(run)
+    if frontier_volatility.size:
+        ax.plot(
+            frontier_volatility,
+            frontier_return,
+            color="#AAB2BD",
+            linewidth=1.6,
+            linestyle="--",
+            zorder=1,
+            label="Classical mean-variance frontier (no cardinality limit)",
+        )
+
     for index, result in enumerate(results):
         marker = "D" if "qaoa" in result.method else ("s" if "gurobi" in result.method else "o")
         ax.scatter(
@@ -330,6 +386,7 @@ def plot_risk_return(run: HybridRun, path: Path) -> dict[str, Path]:
             color=COLORS[index % len(COLORS)],
             edgecolor="white",
             linewidth=0.7,
+            zorder=2,
             label=_label(result.method),
         )
     ax.set_xlabel("Expected annual volatility")

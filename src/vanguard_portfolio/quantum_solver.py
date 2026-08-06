@@ -39,6 +39,13 @@ class XYQAOAConfig:
     transpile_optimization_level: int = 3
     ibm_backend: str | None = None
 
+    enable_dynamical_decoupling: bool = True
+    dynamical_decoupling_sequence: str = "XY4"
+
+    enable_pauli_twirling: bool = False
+    pauli_twirling_strategy: str = "active"
+    pauli_twirling_num_randomizations: int = 32
+
     def __post_init__(self) -> None:
         if int(self.depth) <= 0 or int(self.shots) <= 0:
             raise ValueError("depth and shots must be positive")
@@ -388,6 +395,7 @@ def _sample_ibm_runtime(
     backend_name: str,
     shots: int,
     optimization_level: int,
+    config: XYQAOAConfig,
 ) -> tuple[dict[str, int], dict[str, Any]]:
     try:
         from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
@@ -429,6 +437,19 @@ def _sample_ibm_runtime(
     isa_circuit = pass_manager.run(measured)
     transpile_seconds = time.perf_counter() - transpile_start
     sampler = SamplerV2(mode=backend)
+
+    sampler.options.dynamical_decoupling.enable = config.enable_dynamical_decoupling
+    if config.enable_dynamical_decoupling:
+        sampler.options.dynamical_decoupling.sequence_type = config.dynamical_decoupling_sequence
+
+    sampler.options.twirling.enable_gates = config.enable_pauli_twirling
+
+    if config.enable_pauli_twirling:
+        sampler.options.twirling.strategy = config.pauli_twirling_strategy
+        sampler.options.twirling.num_randomizations = (
+            config.pauli_twirling_num_randomizations
+        )
+
     execution_start = time.perf_counter()
     job = sampler.run([isa_circuit], shots=int(shots))
     publication = job.result()[0]
@@ -575,6 +596,7 @@ def solve_xy_qaoa(
                 backend_name=config.ibm_backend,
                 shots=config.shots,
                 optimization_level=config.transpile_optimization_level,
+                config=config
             )
 
     ranking_start = time.perf_counter()
