@@ -51,6 +51,8 @@ def test_notebook_uses_unified_environment_and_resumable_qpu_jobs() -> None:
     assert "ALLOW_GUIDE_FALLBACK = True" in text
     assert "RUN_SCALING_STRETCH = True" in text
     assert 'command.append(\\\"--resume\\\")' in text
+    assert '.isin(GLOBAL_CORE_SIZES)' in text
+    assert '.isin(GLOBAL_STRETCH_SIZES)' in text
     assert "create_scaling_plots" in text
     assert "scaling_runtime.png" in text
     assert "scaling_quantum.png" in text
