@@ -47,9 +47,13 @@ def test_notebook_uses_unified_environment_and_resumable_qpu_jobs() -> None:
     assert "QPU_FAIL_FAST = False" in text
     assert "RUN_IBM_QPU = False" in text
     assert "Skipping completed QPU job" in text
-    assert "RELAXATION_TOL = 1.0e-10" in text
-    assert "ALLOCATION_TOL = 1.0e-8" in text
-    assert "RUN_SCALING_STRETCH = False" in text
+    assert "QP_TOLERANCE = 1.0e-8" in text
+    assert "ALLOW_GUIDE_FALLBACK = True" in text
+    assert "RUN_SCALING_STRETCH = True" in text
+    assert 'command.append(\\\"--resume\\\")' in text
+    assert "create_scaling_plots" in text
+    assert "scaling_runtime.png" in text
+    assert "scaling_quantum.png" in text
     assert "profile=\\\"evaluation\\\"" in text
     assert "scaling_20k" not in text
     assert "Reopen under a separate IBM Runtime kernel" not in text

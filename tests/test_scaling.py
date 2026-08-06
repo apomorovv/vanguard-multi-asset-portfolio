@@ -78,6 +78,53 @@ class ScalingScriptTests(unittest.TestCase):
             )
         self.assertEqual(created, [])
 
+    def test_plots_include_runtime_and_quantum_anatomy(self) -> None:
+        timed_fields = {
+            "search_end_to_end_seconds": 5.0,
+            "relaxation_seconds": 2.0,
+            "data_generation_seconds": 0.2,
+            "initialization_seconds": 0.3,
+            "classical_window_seconds": 0.8,
+            "quantum_window_seconds": 1.2,
+            "window_overhead_seconds": 0.5,
+            "relative_gap_to_relaxation": 0.01,
+            "peak_rss_gib": 0.5,
+            "factor_risk_storage_mib": 0.1,
+            "dense_covariance_gib_avoided": 0.4,
+            "quantum_angle_seconds": 0.4,
+            "quantum_sampler_seconds": 0.3,
+            "quantum_allocation_seconds": 0.5,
+            "quantum_cardinality_rate": 1.0,
+        }
+        row = {
+            "n_assets": 250,
+            "runs": 3,
+            "successful_runs": 3,
+            "zero_breach_rate": 1.0,
+            "relaxation_bound_rate": 1.0,
+            "relaxation_fallback_rate": 0.0,
+        }
+        for field, value in timed_fields.items():
+            row[f"{field}_q1"] = value
+            row[f"{field}_median"] = value
+            row[f"{field}_q3"] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            created = self.scaling._plots([row], Path(directory))
+            names = {path.name for path in created}
+            self.assertEqual(
+                names,
+                {
+                    "scaling_evidence.png",
+                    "scaling_evidence.pdf",
+                    "scaling_runtime.png",
+                    "scaling_runtime.pdf",
+                    "scaling_quantum.png",
+                    "scaling_quantum.pdf",
+                },
+            )
+            self.assertTrue(all(path.is_file() for path in created))
+
 
 if __name__ == "__main__":
     unittest.main()

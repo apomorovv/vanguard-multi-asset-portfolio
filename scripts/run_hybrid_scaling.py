@@ -49,16 +49,16 @@ OUTPUT_FILENAMES = (
     "scaling_manifest.json",
     "scaling_evidence.png",
     "scaling_evidence.pdf",
-)
-LEGACY_PLOT_FILENAMES = (
     "scaling_runtime.png",
     "scaling_runtime.pdf",
+    "scaling_quantum.png",
+    "scaling_quantum.pdf",
+)
+LEGACY_PLOT_FILENAMES = (
     "scaling_quality_and_feasibility.png",
     "scaling_quality_and_feasibility.pdf",
     "scaling_memory_and_first_valid.png",
     "scaling_memory_and_first_valid.pdf",
-    "scaling_quantum.png",
-    "scaling_quantum.pdf",
 )
 RUN_COLUMNS = (
     "study_tier",
@@ -454,6 +454,7 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "initialization_seconds",
         "classical_window_seconds",
         "quantum_window_seconds",
+        "window_overhead_seconds",
         "gurobi_seconds",
         "relative_gap_to_relaxation",
         "relative_hybrid_gap_to_gurobi",
@@ -540,7 +541,7 @@ def _errorbar(ax: Any, rows: list[dict[str, Any]], field: str, **kwargs: Any) ->
 
 
 def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
-    """Create one compact figure containing the scaling claims that matter."""
+    """Create the compact scaling, runtime-anatomy, and quantum figures."""
 
     import matplotlib
 
@@ -632,12 +633,13 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     )
     if uncertified_guide_runs:
         axes[0, 1].text(
-            0.02,
+            0.98,
             0.04,
             f"{uncertified_guide_runs} valid run(s) had no solved relaxation bound",
             transform=axes[0, 1].transAxes,
             fontsize=8,
             color="#7B61A8",
+            ha="right",
         )
     axes[0, 1].grid(alpha=0.25, which="both")
     axes[0, 1].legend(frameon=False, fontsize=8)
@@ -720,7 +722,217 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
         fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
         created.append(path)
     plt.close(fig)
+
+    stage_specs = (
+        ("data_generation_seconds", "Data generation", "#7B61A8", "o"),
+        (
+            "relaxation_seconds",
+            "Guide relaxation (solved or capped)",
+            "#0B5CAD",
+            "s",
+        ),
+        ("initialization_seconds", "Valid exact-K start", "#6BAED6", "D"),
+        (
+            "classical_window_seconds",
+            "Classical LNS + allocation",
+            "#00A6A6",
+            "^",
+        ),
+        (
+            "quantum_window_seconds",
+            "XY-QAOA + allocation",
+            "#F28E2B",
+            "v",
+        ),
+        ("window_overhead_seconds", "Hybrid overhead", "#9C9C9C", "P"),
+    )
+    active_stage_specs = [
+        spec
+        for spec in stage_specs
+        if any(float(row.get(f"{spec[0]}_median", 0.0) or 0.0) > 0.0 for row in summary)
+    ]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.9))
+    for field, label, color, marker in active_stage_specs:
+        _errorbar(
+            axes[0],
+            summary,
+            field,
+            marker=marker,
+            linewidth=1.8,
+            color=color,
+            label=label,
+        )
+    fallback_rows = [
+        row
+        for row in summary
+        if float(row.get("relaxation_fallback_rate", 0.0)) > 0.0
+        and "relaxation_seconds_median" in row
+    ]
+    if fallback_rows:
+        axes[0].scatter(
+            [int(row["n_assets"]) for row in fallback_rows],
+            [float(row["relaxation_seconds_median"]) for row in fallback_rows],
+            marker="o",
+            s=95,
+            facecolors="none",
+            edgecolors="#D1495B",
+            linewidths=1.8,
+            label="Guide fallback used",
+            zorder=5,
+        )
+    axes[0].set_xscale("log")
+    axes[0].set_yscale("log")
+    axes[0].set_xlabel("Global asset universe size")
+    axes[0].set_ylabel("Seconds; median and IQR")
+    axes[0].set_title("Absolute runtime by stage")
+    axes[0].grid(alpha=0.25, which="both")
+    axes[0].legend(frameon=False, fontsize=7.5, ncol=2)
+
+    positions = np.arange(len(summary))
+    stage_values = np.asarray(
+        [
+            [float(row.get(f"{field}_median", 0.0) or 0.0) for row in summary]
+            for field, *_ in active_stage_specs
+        ],
+        dtype=float,
+    )
+    stage_totals = np.sum(stage_values, axis=0)
+    safe_totals = np.where(stage_totals > 0.0, stage_totals, 1.0)
+    bottom = np.zeros(len(summary), dtype=float)
+    for values, (_, label, color, _) in zip(stage_values, active_stage_specs):
+        shares = 100.0 * values / safe_totals
+        axes[1].bar(
+            positions,
+            shares,
+            bottom=bottom,
+            color=color,
+            label=label,
+        )
+        bottom += shares
+    tick_labels = []
+    for row in summary:
+        label = f"{int(row['n_assets']):,}"
+        if float(row.get("relaxation_fallback_rate", 0.0)) > 0.0:
+            label += "*"
+        tick_labels.append(label)
+    axes[1].set_xticks(positions)
+    axes[1].set_xticklabels(tick_labels, rotation=35, ha="right")
+    axes[1].set_ylim(0.0, 112.0)
+    axes[1].set_xlabel("Global asset universe size")
+    axes[1].set_ylabel("Share of median stage times")
+    for position, row in zip(positions, summary):
+        total = row.get("search_end_to_end_seconds_median")
+        if total not in (None, ""):
+            axes[1].text(
+                position,
+                102.0,
+                f"{float(total):.1f}s",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                rotation=35,
+            )
+    composition_title = "Per-universe runtime composition"
+    if fallback_rows:
+        composition_title += " (* = guide fallback)"
+    axes[1].set_title(composition_title)
+    axes[1].grid(axis="y", alpha=0.25)
+    fig.suptitle("Hybrid runtime anatomy: global guide, classical search, and XY-QAOA")
+    fig.tight_layout()
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_runtime.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
+    plt.close(fig)
+
+    quantum_fields = (
+        (
+            "quantum_angle_seconds",
+            "CPU fixed-weight angle optimization",
+            "#7B61A8",
+            "o",
+        ),
+        ("quantum_sampler_seconds", "Circuit sampling backend", "#F28E2B", "s"),
+        ("quantum_allocation_seconds", "Exact allocation oracle", "#00A6A6", "^"),
+    )
+    quantum_summary = [
+        row
+        for row in summary
+        if any(float(row.get(f"{field}_median", 0.0) or 0.0) > 0.0 for field, *_ in quantum_fields)
+    ]
+    if quantum_summary:
+        fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.9))
+        for field, label, color, marker in quantum_fields:
+            if not any(
+                float(row.get(f"{field}_median", 0.0) or 0.0) > 0.0
+                for row in quantum_summary
+            ):
+                continue
+            _errorbar(
+                axes[0],
+                quantum_summary,
+                field,
+                marker=marker,
+                linewidth=1.8,
+                color=color,
+                label=label,
+            )
+        axes[0].set_xscale("log")
+        axes[0].set_yscale("log")
+        axes[0].set_xlabel("Global asset universe size")
+        axes[0].set_ylabel("Seconds; median and IQR")
+        axes[0].set_title("Fixed-window XY-QAOA phase timing")
+        axes[0].grid(alpha=0.25, which="both")
+        axes[0].legend(frameon=False, fontsize=8)
+
+        cardinality_rows = [
+            row for row in quantum_summary if "quantum_cardinality_rate_median" in row
+        ]
+        _errorbar(
+            axes[1],
+            cardinality_rows,
+            "quantum_cardinality_rate",
+            marker="o",
+            linewidth=2.0,
+            color="#0B5CAD",
+        )
+        rates = [
+            float(row["quantum_cardinality_rate_median"]) for row in cardinality_rows
+        ]
+        axes[1].set_xscale("log")
+        axes[1].set_ylim(0.9 if rates and min(rates) >= 0.9 else 0.0, 1.01)
+        axes[1].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+        axes[1].set_xlabel("Global asset universe size")
+        axes[1].set_ylabel("Cardinality-valid sampled states")
+        axes[1].set_title("XY mixer preserves the exact-cardinality subspace")
+        axes[1].grid(alpha=0.25, which="both")
+        axes[1].text(
+            0.02,
+            0.03,
+            "Correctness diagnostic—not evidence of quantum advantage",
+            transform=axes[1].transAxes,
+            fontsize=8,
+            color="#51606F",
+        )
+        fig.suptitle("Quantum-window anatomy and feasibility")
+        fig.tight_layout()
+        for suffix in ("png", "pdf"):
+            path = output / f"scaling_quantum.{suffix}"
+            fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+            created.append(path)
+        plt.close(fig)
     return created
+
+
+def create_scaling_plots(
+    records: list[dict[str, Any]],
+    output: Path,
+) -> list[Path]:
+    """Aggregate raw case records and write the evaluator-facing scaling figures."""
+
+    output.mkdir(parents=True, exist_ok=True)
+    return _plots(_summary_rows(records), output)
 
 
 def _environment() -> dict[str, Any]:
