@@ -347,7 +347,11 @@ The scaling study writes raw trial rows, method-level rows, aggregated
 per-size summaries, resolved benchmark settings, hardware and package
 metadata, and presentation plots. Claims in the presentation should be
 traceable to the generated CSV or JSON records rather than inferred only from
-a figure.
+a figure. `scaling_runtime_presentation.png` provides the main-deck view of
+end-to-end time and stage slices; `scaling_runtime.png` retains the full
+per-universe timing anatomy. Resume checks include a result-schema and
+algorithm-configuration fingerprint, so incompatible checkpoints are never
+silently combined.
 
 For large scaling cases, avoid serializing unnecessary dense problem matrices
 or generating dense synthetic backtests unless those artifacts are explicitly

@@ -299,11 +299,47 @@ class HybridTests(unittest.TestCase):
         self.assertTrue(run.relaxation.metadata["fallback_used"])
         self.assertEqual(
             run.relaxation.metadata["guide_source"],
-            "unaccepted_continuous_iterate",
+            "near_feasible_unaccepted_continuous_iterate",
         )
+        self.assertTrue(run.relaxation.metadata["fallback_iterate_usable"])
         self.assertIn("continuous_relaxation", run.skipped)
         relaxation_row = run.summary_records()[0]
         self.assertEqual(relaxation_row["certification"], "uncertified_guide_iterate")
+        self.assertEqual(relaxation_row["gap_to_best"], "")
+
+    def test_hybrid_rejects_a_materially_infeasible_fallback_guide(self) -> None:
+        accepted = solve_relaxation(self.problem, self.preferences, self.constraints)
+        limited = replace(
+            accepted,
+            status="run time limit reached",
+            success=False,
+            optimal=False,
+            feasible=False,
+            breaches=100,
+            max_violation=5.0e-2,
+        )
+        config = HybridConfig(
+            iterations=1,
+            window_size=5,
+            enumerate_windows_up_to=1_000,
+            run_quantum=False,
+            run_gurobi_reference=False,
+            allow_relaxation_fallback=True,
+        )
+        with mock.patch(
+            "vanguard_portfolio.hybrid.solve_relaxation", return_value=limited
+        ):
+            run = run_hybrid_optimizer(
+                self.problem, self.preferences, self.constraints, config
+            )
+
+        self.assertTrue(run.best.success)
+        self.assertEqual(run.best.breaches, 0)
+        self.assertEqual(
+            run.relaxation.metadata["guide_source"],
+            "current_portfolio",
+        )
+        self.assertFalse(run.relaxation.metadata["fallback_iterate_usable"])
 
     def test_turnover_residual_repair_is_a_convex_contraction(self) -> None:
         problem = generate_factor_universe(

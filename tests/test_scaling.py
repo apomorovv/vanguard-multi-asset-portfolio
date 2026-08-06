@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,7 @@ class ScalingScriptTests(unittest.TestCase):
     def test_plots_include_runtime_and_quantum_anatomy(self) -> None:
         timed_fields = {
             "search_end_to_end_seconds": 5.0,
+            "time_to_first_valid_seconds": 2.5,
             "relaxation_seconds": 2.0,
             "data_generation_seconds": 0.2,
             "initialization_seconds": 0.3,
@@ -94,6 +96,7 @@ class ScalingScriptTests(unittest.TestCase):
             "quantum_angle_seconds": 0.4,
             "quantum_sampler_seconds": 0.3,
             "quantum_allocation_seconds": 0.5,
+            "quantum_other_seconds": 0.0,
             "quantum_cardinality_rate": 1.0,
         }
         row = {
@@ -119,11 +122,111 @@ class ScalingScriptTests(unittest.TestCase):
                     "scaling_evidence.pdf",
                     "scaling_runtime.png",
                     "scaling_runtime.pdf",
+                    "scaling_runtime_presentation.png",
+                    "scaling_runtime_presentation.pdf",
                     "scaling_quantum.png",
                     "scaling_quantum.pdf",
                 },
             )
             self.assertTrue(all(path.is_file() for path in created))
+
+    def test_legacy_plot_rows_get_consistent_first_valid_and_quantum_timing(self) -> None:
+        row = self.scaling._normalise_record(
+            {
+                "n_assets": 250,
+                "success": True,
+                "data_generation_seconds": 0.25,
+                "time_to_first_valid_seconds": 2.0,
+                "quantum_window_seconds": 1.5,
+                "quantum_angle_seconds": 0.2,
+                "quantum_sampler_seconds": 0.5,
+                "quantum_allocation_seconds": 0.6,
+            }
+        )
+        self.assertEqual(row["time_to_first_valid_seconds"], 2.25)
+        self.assertAlmostEqual(row["quantum_other_seconds"], 0.2)
+
+    def test_runtime_composition_uses_one_actual_median_total_run(self) -> None:
+        records = []
+        for repetition, total, relaxation, quantum in (
+            (0, 5.0, 1.0, 1.0),
+            (1, 7.0, 2.0, 1.5),
+            (2, 10.0, 4.0, 2.0),
+        ):
+            records.append(
+                {
+                    "scaling_schema_version": self.scaling.SCALING_SCHEMA_VERSION,
+                    "n_assets": 250,
+                    "repetition": repetition,
+                    "success": True,
+                    "search_end_to_end_seconds": total,
+                    "data_generation_seconds": 0.5,
+                    "relaxation_seconds": relaxation,
+                    "initialization_seconds": 0.5,
+                    "classical_window_seconds": 1.0,
+                    "quantum_window_seconds": quantum,
+                    "window_overhead_seconds": total
+                    - 0.5
+                    - relaxation
+                    - 0.5
+                    - 1.0
+                    - quantum,
+                }
+            )
+        summary = self.scaling._summary_rows(records)
+        fields = [
+            "data_generation_seconds",
+            "relaxation_seconds",
+            "initialization_seconds",
+            "classical_window_seconds",
+            "quantum_window_seconds",
+            "window_overhead_seconds",
+        ]
+        selected = self.scaling._representative_stage_rows(
+            summary,
+            records,
+            fields,
+        )[0]
+        self.assertEqual(selected["total_seconds"], 7.0)
+        self.assertAlmostEqual(sum(selected[field] for field in fields), 7.0)
+
+    def test_resume_fingerprint_ignores_only_size_and_repetition_grid(self) -> None:
+        first = self.scaling._parser().parse_args(
+            ["--sizes", "250", "500", "--repetitions", "1"]
+        )
+        extended = self.scaling._parser().parse_args(
+            ["--sizes", "250", "500", "1000", "--repetitions", "3"]
+        )
+        changed = self.scaling._parser().parse_args(
+            ["--relaxation-tolerance", "1e-9"]
+        )
+        self.assertEqual(
+            self.scaling._case_config_sha256(first),
+            self.scaling._case_config_sha256(extended),
+        )
+        self.assertNotEqual(
+            self.scaling._case_config_sha256(first),
+            self.scaling._case_config_sha256(changed),
+        )
+
+    def test_resume_rejects_an_unversioned_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "scaling_runs.csv").write_text(
+                "n_assets,repetition,seed,success\n250,0,1,True\n",
+                encoding="utf-8",
+            )
+            (output / "scaling_config.json").write_text(
+                json.dumps({"relaxation_tolerance": 1.0e-9}) + "\n",
+                encoding="utf-8",
+            )
+            return_code = self.scaling.main(
+                ["--resume", "--output", str(output)]
+            )
+        self.assertEqual(
+            return_code,
+            self.scaling.CHECKPOINT_CONFIG_MISMATCH_EXIT_CODE,
+        )
 
 
 if __name__ == "__main__":

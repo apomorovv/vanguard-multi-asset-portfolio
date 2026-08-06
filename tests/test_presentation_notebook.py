@@ -57,7 +57,10 @@ def test_notebook_uses_unified_environment_and_resumable_qpu_jobs() -> None:
     assert "completed_legacy_sizes" in text
     assert "create_scaling_plots" in text
     assert "scaling_runtime.png" in text
+    assert "scaling_runtime_presentation.png" in text
     assert "scaling_quantum.png" in text
+    assert "Checkpoint settings or schema changed" in text
+    assert "case_config_sha256" in text
     assert "profile=\\\"evaluation\\\"" in text
     assert "scaling_20k" not in text
     assert "Reopen under a separate IBM Runtime kernel" not in text

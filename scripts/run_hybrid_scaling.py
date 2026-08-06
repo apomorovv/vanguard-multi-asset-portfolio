@@ -40,6 +40,7 @@ from vanguard_portfolio.quantum_solver import XYQAOAConfig
 from vanguard_portfolio.schemas import PortfolioConstraints, Preferences
 
 DEFAULT_SIZES = (250, 500, 1_000, 2_000, 5_000, 10_000, 20_000)
+SCALING_SCHEMA_VERSION = 2
 OUTPUT_FILENAMES = (
     "scaling_runs.csv",
     "scaling_methods.csv",
@@ -51,6 +52,8 @@ OUTPUT_FILENAMES = (
     "scaling_evidence.pdf",
     "scaling_runtime.png",
     "scaling_runtime.pdf",
+    "scaling_runtime_presentation.png",
+    "scaling_runtime_presentation.pdf",
     "scaling_quantum.png",
     "scaling_quantum.pdf",
 )
@@ -61,6 +64,8 @@ LEGACY_PLOT_FILENAMES = (
     "scaling_memory_and_first_valid.pdf",
 )
 RUN_COLUMNS = (
+    "scaling_schema_version",
+    "case_config_sha256",
     "study_tier",
     "n_assets",
     "cardinality",
@@ -91,9 +96,12 @@ RUN_COLUMNS = (
     "relaxation_dual_residual",
     "relaxation_rho_updates",
     "relaxation_status",
+    "relaxation_validation_breaches",
+    "relaxation_validation_max_violation",
     "relaxation_accepted",
     "relaxation_bound_available",
     "relaxation_fallback_used",
+    "relaxation_fallback_iterate_usable",
     "relaxation_guide_source",
     "initialization_seconds",
     "classical_window_seconds",
@@ -116,11 +124,103 @@ RUN_COLUMNS = (
     "quantum_angle_seconds",
     "quantum_sampler_seconds",
     "quantum_allocation_seconds",
+    "quantum_other_seconds",
     "certification_attempted",
     "certification_completed",
+    "certification_optimal",
     "skipped_components",
     "error",
 )
+
+CASE_CONFIG_FIELDS = (
+    "cardinality",
+    "groups",
+    "factors",
+    "window_size",
+    "iterations",
+    "backend",
+    "relaxation_tolerance",
+    "relaxation_max_iter",
+    "relaxation_time_limit",
+    "relaxation_fallback",
+    "allocation_tolerance",
+    "allocation_max_iter",
+    "minimum_active_weight",
+    "maximum_weight",
+    "max_turnover",
+    "initial_trials",
+    "initial_milp_time_limit",
+    "classical_tabu_iterations",
+    "classical_tabu_tenure",
+    "classical_oracle_candidates",
+    "enumerate_windows_up_to",
+    "quantum",
+    "quantum_backend",
+    "quantum_depth",
+    "quantum_shots",
+    "quantum_optimizer_maxiter",
+    "quantum_optimizer_starts",
+    "quantum_top_candidates",
+    "maximum_subspace_states",
+    "maximum_quantum_edges",
+    "transpile_optimization_level",
+    "gurobi",
+    "certification_max_assets",
+    "gurobi_time_limit",
+    "gurobi_mip_gap",
+    "materialize_covariance",
+    "case_time_limit",
+    "seed",
+)
+CHECKPOINT_CONFIG_MISMATCH_EXIT_CODE = 3
+
+
+def _case_config_payload(values: argparse.Namespace | dict[str, Any]) -> dict[str, Any]:
+    """Return the settings that must remain identical across resumed cases."""
+
+    source = vars(values) if isinstance(values, argparse.Namespace) else values
+    payload: dict[str, Any] = {"scaling_schema_version": SCALING_SCHEMA_VERSION}
+    for field in CASE_CONFIG_FIELDS:
+        if field not in source:
+            raise KeyError(f"missing scaling configuration field {field!r}")
+        value = source[field]
+        payload[field] = str(value) if isinstance(value, Path) else value
+    return payload
+
+
+def _case_config_sha256(values: argparse.Namespace | dict[str, Any]) -> str:
+    payload = json.dumps(
+        _case_config_payload(values),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _resolved_config(args: argparse.Namespace) -> dict[str, Any]:
+    resolved = {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+        if key not in {"worker_spec", "worker_output"}
+    }
+    resolved["scaling_schema_version"] = SCALING_SCHEMA_VERSION
+    resolved["case_config_sha256"] = _case_config_sha256(args)
+    return resolved
+
+
+def _checkpoint_config_mismatch(
+    existing: dict[str, Any],
+    current: dict[str, Any],
+) -> list[str]:
+    """Describe settings that make an existing checkpoint unsafe to resume."""
+
+    fields = ("scaling_schema_version", "case_config_sha256")
+    return [
+        f"{field}: existing={existing.get(field)!r}, requested={current.get(field)!r}"
+        for field in fields
+        if existing.get(field) != current.get(field)
+    ]
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], preferred: Iterable[str] = ()) -> None:
@@ -153,12 +253,44 @@ def _read_csv(path: Path) -> list[dict[str, Any]]:
                 row[key] = False
             else:
                 try:
-                    number = float(value)
-                    row[key] = int(number) if number.is_integer() else number
+                    if value.lstrip("+-").isdigit():
+                        row[key] = int(value)
+                        continue
+                    row[key] = float(value)
                 except ValueError:
                     row[key] = value
         rows.append(row)
     return rows
+
+
+def _normalise_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade plot-only legacy rows without pretending they are resumable."""
+
+    row = dict(record)
+    raw_version = row.get("scaling_schema_version", 1)
+    version = 1 if raw_version in (None, "") else int(raw_version)
+    if version < 2:
+        first_valid = row.get("time_to_first_valid_seconds")
+        construction = row.get("data_generation_seconds")
+        if first_valid not in (None, "") and construction not in (None, ""):
+            row["time_to_first_valid_seconds"] = float(first_valid) + float(construction)
+    if row.get("quantum_other_seconds") in (None, ""):
+        quantum_total = row.get("quantum_window_seconds")
+        if quantum_total not in (None, ""):
+            accounted = sum(
+                float(row.get(field, 0.0) or 0.0)
+                for field in (
+                    "quantum_angle_seconds",
+                    "quantum_sampler_seconds",
+                    "quantum_allocation_seconds",
+                )
+            )
+            row["quantum_other_seconds"] = max(float(quantum_total) - accounted, 0.0)
+    return row
+
+
+def _normalise_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalise_record(record) for record in records]
 
 
 def _peak_rss_gib() -> float:
@@ -171,16 +303,42 @@ def _relative_gap(value: float, reference: float) -> float:
     return float((value - reference) / max(abs(reference), 1e-12))
 
 
+def _timing_residual(total: float, parts: Iterable[float], *, label: str) -> float:
+    residual = float(total) - float(sum(parts))
+    tolerance = max(1.0e-6, 1.0e-6 * max(abs(float(total)), 1.0))
+    if residual < -tolerance:
+        raise RuntimeError(
+            f"{label} timing components exceed their measured total by "
+            f"{-residual:.6g} seconds"
+        )
+    return max(residual, 0.0)
+
+
 def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     size = int(spec["n_assets"])
-    cardinality = min(int(spec["cardinality"]), size - 1)
-    groups = min(int(spec["groups"]), cardinality, size)
+    cardinality = int(spec["cardinality"])
+    groups = int(spec["groups"])
+    factors = int(spec["factors"])
+    window_size = int(spec["window_size"])
+    if not 1 <= cardinality < size:
+        raise ValueError(
+            f"cardinality must satisfy 1 <= K < n_assets; got K={cardinality}, "
+            f"n_assets={size}"
+        )
+    if not 1 <= groups <= size:
+        raise ValueError(f"groups must satisfy 1 <= groups <= n_assets; got {groups}")
+    if not 1 <= factors <= size:
+        raise ValueError(f"factors must satisfy 1 <= factors <= n_assets; got {factors}")
+    if not 2 <= window_size <= size:
+        raise ValueError(
+            f"window_size must satisfy 2 <= window_size <= n_assets; got {window_size}"
+        )
     seed = int(spec["seed"])
     data_start = time.perf_counter()
     problem = generate_factor_universe(
         n_assets=size,
         n_groups=groups,
-        n_factors=min(int(spec["factors"]), size),
+        n_factors=factors,
         seed=seed,
         current_cardinality=cardinality,
         materialize_covariance=bool(spec["materialize_covariance"]),
@@ -188,8 +346,17 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     problem.max_turnover = float(spec["max_turnover"])
     data_seconds = time.perf_counter() - data_start
 
-    minimum_weight = min(float(spec["minimum_active_weight"]), 0.5 / cardinality)
-    maximum_weight = max(float(spec["maximum_weight"]), 1.5 / cardinality)
+    minimum_weight = float(spec["minimum_active_weight"])
+    maximum_weight = float(spec["maximum_weight"])
+    if not 0.0 <= minimum_weight <= maximum_weight:
+        raise ValueError(
+            "minimum_active_weight and maximum_weight must satisfy "
+            f"0 <= minimum <= maximum; got {minimum_weight} and {maximum_weight}"
+        )
+    if cardinality * minimum_weight > problem.budget + 1.0e-12:
+        raise ValueError("cardinality times minimum_active_weight exceeds the budget")
+    if cardinality * maximum_weight < problem.budget - 1.0e-12:
+        raise ValueError("cardinality times maximum_weight cannot fill the budget")
     constraints = PortfolioConstraints(
         exact_cardinality=cardinality,
         minimum_active_weight=minimum_weight,
@@ -218,7 +385,7 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         relaxation_options["polish"] = False
     config = HybridConfig(
         iterations=int(spec["iterations"]),
-        window_size=min(int(spec["window_size"]), size),
+        window_size=window_size,
         allocation_backend=str(spec["allocation_backend"]),
         allocation_options={
             "tol": float(spec["allocation_tolerance"]),
@@ -269,8 +436,9 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     relaxation_accepted = bool(run.relaxation.success)
     relaxation_bound_available = bool(run.relaxation.success and run.relaxation.optimal)
     relaxation_fallback_used = bool(relaxation_metadata.get("fallback_used", False))
-    time_to_valid = float(run.timeline[0]["elapsed_seconds"])
-    initialization_seconds = max(time_to_valid - relaxation_seconds, 0.0)
+    solver_time_to_valid = float(run.timeline[0]["elapsed_seconds"])
+    time_to_valid = data_seconds + solver_time_to_valid
+    initialization_seconds = max(solver_time_to_valid - relaxation_seconds, 0.0)
     classical_seconds = sum(
         float(result.runtime)
         for result in run.results
@@ -284,18 +452,25 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         float(row.get("window_end_to_end_seconds", search.runtime))
         for search, row in zip(quantum_searches, quantum_rows)
     )
-    window_overhead = max(
-        search_solver_seconds
-        - relaxation_seconds
-        - initialization_seconds
-        - classical_seconds
-        - quantum_seconds,
-        0.0,
+    window_overhead = _timing_residual(
+        search_solver_seconds,
+        (
+            relaxation_seconds,
+            initialization_seconds,
+            classical_seconds,
+            quantum_seconds,
+        ),
+        label="hybrid search",
     )
     angle_seconds = sum(float(row.get("angle_optimization_seconds", 0.0)) for row in quantum_rows)
     sampler_seconds = sum(float(row.get("sampler_total_seconds", 0.0)) for row in quantum_rows)
     allocation_seconds = sum(
         float(row.get("allocation_oracle_seconds", 0.0)) for row in quantum_rows
+    )
+    quantum_other_seconds = _timing_residual(
+        quantum_seconds,
+        (angle_seconds, sampler_seconds, allocation_seconds),
+        label="XY-QAOA window",
     )
     cardinality_rate = (
         float(np.mean([float(search.cardinality_feasibility_rate) for search in quantum_searches]))
@@ -314,8 +489,19 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     dense_covariance_gib = problem.dense_covariance_bytes() / 1024.0**3
     best_bound = "" if gurobi is None else gurobi.metadata.get("best_bound", "")
     reported_gap = "" if gurobi is None else gurobi.metadata.get("reported_mip_gap", "")
+    certification_completed = bool(gurobi is not None and gurobi.success and gurobi.feasible)
+    certification_optimal = bool(certification_completed and gurobi.optimal)
+    case_config_sha256 = str(
+        spec.get("case_config_sha256") or _case_config_sha256(spec)
+    )
     record: dict[str, Any] = {
-        "study_tier": "certified_reference" if certify else "scalable_hybrid_search",
+        "scaling_schema_version": SCALING_SCHEMA_VERSION,
+        "case_config_sha256": case_config_sha256,
+        "study_tier": (
+            "certified_reference"
+            if certification_optimal
+            else ("certification_attempted" if certify else "scalable_hybrid_search")
+        ),
         "n_assets": size,
         "cardinality": cardinality,
         "window_size": config.window_size,
@@ -329,7 +515,9 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "relaxation_objective": (
             run.relaxation.objective if relaxation_bound_available else ""
         ),
-        "relaxation_guide_objective": run.relaxation.objective,
+        "relaxation_guide_objective": relaxation_metadata.get(
+            "guide_objective", run.relaxation.objective
+        ),
         "relative_gap_to_relaxation": (
             _relative_gap(hybrid_best.objective, run.relaxation.objective)
             if relaxation_bound_available
@@ -357,9 +545,14 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "relaxation_dual_residual": relaxation_metadata.get("dual_residual", ""),
         "relaxation_rho_updates": relaxation_metadata.get("rho_updates", ""),
         "relaxation_status": run.relaxation.status,
+        "relaxation_validation_breaches": int(run.relaxation.breaches),
+        "relaxation_validation_max_violation": float(run.relaxation.max_violation),
         "relaxation_accepted": relaxation_accepted,
         "relaxation_bound_available": relaxation_bound_available,
         "relaxation_fallback_used": relaxation_fallback_used,
+        "relaxation_fallback_iterate_usable": relaxation_metadata.get(
+            "fallback_iterate_usable", ""
+        ),
         "relaxation_guide_source": relaxation_metadata.get("guide_source", ""),
         "initialization_seconds": initialization_seconds,
         "classical_window_seconds": classical_seconds,
@@ -385,8 +578,10 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
         "quantum_angle_seconds": angle_seconds,
         "quantum_sampler_seconds": sampler_seconds,
         "quantum_allocation_seconds": allocation_seconds,
+        "quantum_other_seconds": quantum_other_seconds,
         "certification_attempted": certify,
-        "certification_completed": gurobi is not None,
+        "certification_completed": certification_completed,
+        "certification_optimal": certification_optimal,
         "skipped_components": json.dumps(run.skipped, sort_keys=True),
         "error": "",
     }
@@ -394,6 +589,8 @@ def _run_case(spec: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]
     for row in run.summary_records():
         method_rows.append(
             {
+                "scaling_schema_version": SCALING_SCHEMA_VERSION,
+                "case_config_sha256": case_config_sha256,
                 "n_assets": size,
                 "repetition": int(spec["repetition"]),
                 "seed": seed,
@@ -412,6 +609,10 @@ def _worker(spec_path: Path, output_path: Path) -> int:
     except Exception as exc:  # noqa: BLE001 - a failed case must remain auditable
         payload = {
             "record": {
+                "scaling_schema_version": SCALING_SCHEMA_VERSION,
+                "case_config_sha256": str(
+                    spec.get("case_config_sha256") or _case_config_sha256(spec)
+                ),
                 "study_tier": "run_failure",
                 "n_assets": int(spec["n_assets"]),
                 "cardinality": int(spec["cardinality"]),
@@ -425,6 +626,7 @@ def _worker(spec_path: Path, output_path: Path) -> int:
                 "certification_attempted": bool(spec["gurobi"])
                 and int(spec["n_assets"]) <= int(spec["certification_max_assets"]),
                 "certification_completed": False,
+                "certification_optimal": False,
                 "error": f"{type(exc).__name__}: {exc}",
             },
             "methods": [],
@@ -444,6 +646,7 @@ def _quantiles(values: list[float]) -> tuple[float, float, float]:
 
 
 def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = _normalise_records(records)
     numeric_fields = (
         "search_end_to_end_seconds",
         "full_end_to_end_seconds",
@@ -465,6 +668,7 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "quantum_angle_seconds",
         "quantum_sampler_seconds",
         "quantum_allocation_seconds",
+        "quantum_other_seconds",
         "quantum_cardinality_rate",
     )
     rows: list[dict[str, Any]] = []
@@ -472,27 +676,48 @@ def _summary_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         group = [row for row in records if int(row["n_assets"]) == size]
         successful = [row for row in group if row.get("success") is True]
         failed = [row for row in group if row.get("success") is not True]
+        zero_breach_runs = sum(
+            int(row.get("breaches", 1)) == 0 for row in successful
+        )
+        bound_runs = sum(
+            bool(row.get("relaxation_bound_available")) for row in successful
+        )
         summary: dict[str, Any] = {
             "n_assets": size,
             "runs": len(group),
             "successful_runs": len(successful),
             "success_rate": len(successful) / max(len(group), 1),
-            "zero_breach_rate": sum(int(row.get("breaches", 1)) == 0 for row in successful)
-            / max(len(successful), 1),
-            "certified_runs": sum(bool(row.get("certification_completed")) for row in successful),
+            "zero_breach_runs": zero_breach_runs,
+            "zero_breach_rate": zero_breach_runs / max(len(successful), 1),
+            "certified_runs": sum(
+                bool(
+                    row.get(
+                        "certification_optimal",
+                        row.get("certification_completed", False),
+                    )
+                )
+                for row in successful
+            ),
             "relaxation_acceptance_rate": sum(
                 bool(row.get("relaxation_accepted")) for row in successful
             )
             / max(len(successful), 1),
-            "relaxation_bound_rate": sum(
-                bool(row.get("relaxation_bound_available")) for row in successful
-            )
-            / max(len(successful), 1),
+            "relaxation_bound_runs": bound_runs,
+            "relaxation_bound_rate": bound_runs / max(len(successful), 1),
             "relaxation_fallback_rate": sum(
                 bool(row.get("relaxation_fallback_used")) for row in successful
             )
             / max(len(successful), 1),
         }
+        measurement_tiers = sorted(
+            {
+                str(row.get("measurement_tier", "")).strip()
+                for row in group
+                if str(row.get("measurement_tier", "")).strip()
+            }
+        )
+        if measurement_tiers:
+            summary["measurement_tier"] = " | ".join(measurement_tiers)
         failed_seconds = [
             float(row["worker_wall_seconds"])
             for row in failed
@@ -540,7 +765,121 @@ def _errorbar(ax: Any, rows: list[dict[str, Any]], field: str, **kwargs: Any) ->
     ax.errorbar(x, center, yerr=np.vstack([lower, upper]), capsize=3, **kwargs)
 
 
-def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
+def _median_band(
+    ax: Any,
+    rows: list[dict[str, Any]],
+    field: str,
+    *,
+    records: list[dict[str, Any]],
+    color: str,
+    label: str,
+    marker: str,
+) -> None:
+    usable = [row for row in rows if f"{field}_median" in row]
+    if not usable:
+        return
+    x = np.asarray([int(row["n_assets"]) for row in usable], dtype=float)
+    center = np.asarray([float(row[f"{field}_median"]) for row in usable])
+    q1 = np.asarray([float(row[f"{field}_q1"]) for row in usable])
+    q3 = np.asarray([float(row[f"{field}_q3"]) for row in usable])
+    ax.plot(
+        x,
+        center,
+        color=color,
+        marker=marker,
+        linewidth=2.0,
+        label=label,
+        zorder=3,
+    )
+    ax.fill_between(x, q1, q3, color=color, alpha=0.15, linewidth=0.0)
+    for size in x.astype(int):
+        values = [
+            float(row[field])
+            for row in records
+            if row.get("success") is True
+            and int(row.get("n_assets", -1)) == size
+            and row.get(field) not in (None, "")
+            and np.isfinite(float(row[field]))
+        ]
+        if not values:
+            continue
+        offsets = np.linspace(-0.012, 0.012, len(values))
+        ax.scatter(
+            size * np.power(10.0, offsets),
+            values,
+            s=18,
+            facecolors="white",
+            edgecolors=color,
+            linewidths=0.8,
+            alpha=0.85,
+            zorder=4,
+        )
+
+
+def _representative_stage_rows(
+    summary: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    stage_fields: list[str],
+) -> list[dict[str, Any]]:
+    """Select the actual repetition closest to each median total runtime."""
+
+    representatives: list[dict[str, Any]] = []
+    for aggregate in summary:
+        size = int(aggregate["n_assets"])
+        candidates = [
+            row
+            for row in records
+            if row.get("success") is True
+            and int(row.get("n_assets", -1)) == size
+            and row.get("search_end_to_end_seconds") not in (None, "")
+            and all(row.get(field) not in (None, "") for field in stage_fields)
+        ]
+        if candidates:
+            target = float(aggregate["search_end_to_end_seconds_median"])
+            selected = min(
+                candidates,
+                key=lambda row: (
+                    abs(float(row["search_end_to_end_seconds"]) - target),
+                    int(row.get("repetition", 0) or 0),
+                ),
+            )
+            representative = {
+                "n_assets": size,
+                "total_seconds": float(selected["search_end_to_end_seconds"]),
+                "fallback_used": bool(selected.get("relaxation_fallback_used")),
+                **{field: float(selected[field]) for field in stage_fields},
+            }
+        else:
+            values = [
+                float(aggregate.get(f"{field}_median", 0.0) or 0.0)
+                for field in stage_fields
+            ]
+            target = float(
+                aggregate.get("search_end_to_end_seconds_median", sum(values))
+            )
+            raw_total = sum(values)
+            scale = target / raw_total if raw_total > 0.0 else 0.0
+            representative = {
+                "n_assets": size,
+                "total_seconds": target,
+                "fallback_used": float(
+                    aggregate.get("relaxation_fallback_rate", 0.0)
+                )
+                > 0.0,
+                **{
+                    field: value * scale
+                    for field, value in zip(stage_fields, values)
+                },
+            }
+        representatives.append(representative)
+    return representatives
+
+
+def _plots(
+    summary: list[dict[str, Any]],
+    output: Path,
+    records: list[dict[str, Any]] | None = None,
+) -> list[Path]:
     """Create the compact scaling, runtime-anatomy, and quantum figures."""
 
     import matplotlib
@@ -549,6 +888,7 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     import matplotlib.pyplot as plt
     from matplotlib import ticker
 
+    records = _normalise_records(records or [])
     if not summary or not any(int(row.get("successful_runs", 0)) > 0 for row in summary):
         return []
 
@@ -592,15 +932,61 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     axes[0, 0].grid(alpha=0.25, which="both")
     axes[0, 0].legend(frameon=False, fontsize=8)
 
+    gap_rows = [row for row in summary if "relative_gap_to_relaxation_median" in row]
+
+    def bound_count(row: dict[str, Any]) -> int:
+        return int(
+            row.get(
+                "relaxation_bound_runs",
+                round(
+                    float(row.get("relaxation_bound_rate", 0.0))
+                    * int(row.get("successful_runs", 0))
+                ),
+            )
+        )
+
+    complete_gap_rows = [
+        row
+        for row in gap_rows
+        if bound_count(row) == int(row.get("successful_runs", 0))
+    ]
+    partial_gap_rows = [row for row in gap_rows if row not in complete_gap_rows]
     _errorbar(
         axes[0, 1],
-        summary,
+        complete_gap_rows,
         "relative_gap_to_relaxation",
         marker="o",
         linewidth=2.0,
         color="#00A6A6",
         label="Validated incumbent vs solved relaxation",
     )
+    if partial_gap_rows:
+        _errorbar(
+            axes[0, 1],
+            partial_gap_rows,
+            "relative_gap_to_relaxation",
+            marker="o",
+            markerfacecolor="white",
+            linestyle="none",
+            linewidth=1.8,
+            color="#00A6A6",
+            label="Partial solved-bound coverage",
+        )
+        for row in partial_gap_rows:
+            axes[0, 1].annotate(
+                (
+                    f"{bound_count(row)}/"
+                    f"{int(row.get('successful_runs', 0))} bounds"
+                ),
+                (
+                    int(row["n_assets"]),
+                    float(row["relative_gap_to_relaxation_median"]),
+                ),
+                xytext=(4, 5),
+                textcoords="offset points",
+                fontsize=7,
+                color="#51606F",
+            )
     certified = [row for row in summary if "relative_hybrid_gap_to_gurobi_median" in row]
     if certified:
         _errorbar(
@@ -618,17 +1004,23 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     axes[0, 1].set_ylabel("Relative objective gap; median and IQR")
     successful_runs = sum(int(row.get("successful_runs", 0)) for row in summary)
     zero_breach_runs = sum(
-        round(float(row.get("zero_breach_rate", 0.0)) * int(row.get("successful_runs", 0)))
+        int(
+            row.get(
+                "zero_breach_runs",
+                round(
+                    float(row.get("zero_breach_rate", 0.0))
+                    * int(row.get("successful_runs", 0))
+                ),
+            )
+        )
         for row in summary
     )
     axes[0, 1].set_title(
         f"Solution quality ({zero_breach_runs}/{successful_runs} valid runs had zero breaches)"
     )
     uncertified_guide_runs = sum(
-        round(
-            (1.0 - float(row.get("relaxation_bound_rate", 0.0)))
-            * int(row.get("successful_runs", 0))
-        )
+        int(row.get("successful_runs", 0))
+        - bound_count(row)
         for row in summary
     )
     if uncertified_guide_runs:
@@ -724,17 +1116,22 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     plt.close(fig)
 
     stage_specs = (
-        ("data_generation_seconds", "Data generation", "#7B61A8", "o"),
+        (
+            "data_generation_seconds",
+            "Data/model construction",
+            "#5F6B7A",
+            "o",
+        ),
         (
             "relaxation_seconds",
-            "Guide relaxation (solved or capped)",
+            "Factor-QP relaxation",
             "#0B5CAD",
             "s",
         ),
-        ("initialization_seconds", "Valid exact-K start", "#6BAED6", "D"),
+        ("initialization_seconds", "Support construction", "#93B9D8", "D"),
         (
             "classical_window_seconds",
-            "Classical LNS + allocation",
+            "Classical LNS",
             "#00A6A6",
             "^",
         ),
@@ -744,7 +1141,7 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
             "#F28E2B",
             "v",
         ),
-        ("window_overhead_seconds", "Hybrid overhead", "#9C9C9C", "P"),
+        ("window_overhead_seconds", "Other orchestration", "#7B61A8", "P"),
     )
     active_stage_specs = [
         spec
@@ -789,17 +1186,23 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     axes[0].grid(alpha=0.25, which="both")
     axes[0].legend(frameon=False, fontsize=7.5, ncol=2)
 
-    positions = np.arange(len(summary))
+    stage_fields = [field for field, *_ in active_stage_specs]
+    representative_rows = _representative_stage_rows(
+        summary,
+        records,
+        stage_fields,
+    )
+    positions = np.arange(len(representative_rows))
     stage_values = np.asarray(
         [
-            [float(row.get(f"{field}_median", 0.0) or 0.0) for row in summary]
+            [float(row.get(field, 0.0) or 0.0) for row in representative_rows]
             for field, *_ in active_stage_specs
         ],
         dtype=float,
     )
     stage_totals = np.sum(stage_values, axis=0)
     safe_totals = np.where(stage_totals > 0.0, stage_totals, 1.0)
-    bottom = np.zeros(len(summary), dtype=float)
+    bottom = np.zeros(len(representative_rows), dtype=float)
     for values, (_, label, color, _) in zip(stage_values, active_stage_specs):
         shares = 100.0 * values / safe_totals
         axes[1].bar(
@@ -811,18 +1214,18 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
         )
         bottom += shares
     tick_labels = []
-    for row in summary:
+    for row in representative_rows:
         label = f"{int(row['n_assets']):,}"
-        if float(row.get("relaxation_fallback_rate", 0.0)) > 0.0:
+        if bool(row.get("fallback_used")):
             label += "*"
         tick_labels.append(label)
     axes[1].set_xticks(positions)
     axes[1].set_xticklabels(tick_labels, rotation=35, ha="right")
     axes[1].set_ylim(0.0, 112.0)
     axes[1].set_xlabel("Global asset universe size")
-    axes[1].set_ylabel("Share of median stage times")
-    for position, row in zip(positions, summary):
-        total = row.get("search_end_to_end_seconds_median")
+    axes[1].set_ylabel("Share of representative median-total run")
+    for position, row in zip(positions, representative_rows):
+        total = row.get("total_seconds")
         if total not in (None, ""):
             axes[1].text(
                 position,
@@ -833,7 +1236,7 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
                 fontsize=7,
                 rotation=35,
             )
-    composition_title = "Per-universe runtime composition"
+    composition_title = "Representative median-run composition"
     if fallback_rows:
         composition_title += " (* = guide fallback)"
     axes[1].set_title(composition_title)
@@ -842,6 +1245,105 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
     fig.tight_layout()
     for suffix in ("png", "pdf"):
         path = output / f"scaling_runtime.{suffix}"
+        fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
+        created.append(path)
+    plt.close(fig)
+
+    early_presentation_rows = [
+        row for row in representative_rows if int(row["n_assets"]) <= 2_000
+    ]
+    presentation_rows = (
+        early_presentation_rows
+        if len(early_presentation_rows) >= 2
+        else representative_rows
+    )
+    if len(presentation_rows) > 6:
+        selected_indices = np.unique(
+            np.rint(np.linspace(0, len(presentation_rows) - 1, 6)).astype(int)
+        )
+        presentation_rows = [presentation_rows[index] for index in selected_indices]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.6, 5.0))
+    _median_band(
+        axes[0],
+        summary,
+        "search_end_to_end_seconds",
+        records=records,
+        color="#0B5CAD",
+        label="Complete hybrid search",
+        marker="o",
+    )
+    _median_band(
+        axes[0],
+        summary,
+        "time_to_first_valid_seconds",
+        records=records,
+        color="#00A6A6",
+        label="First independently valid portfolio",
+        marker="s",
+    )
+    axes[0].set_xscale("log")
+    axes[0].set_yscale("log")
+    axes[0].set_xlabel("Global asset universe size")
+    axes[0].set_ylabel("Wall-clock seconds")
+    axes[0].set_title("End-to-end scalability")
+    axes[0].grid(alpha=0.25, which="both")
+    axes[0].legend(frameon=False, fontsize=8, loc="best")
+    axes[0].text(
+        0.02,
+        0.03,
+        "Line = median; band = IQR; hollow dots = successful repetitions",
+        transform=axes[0].transAxes,
+        fontsize=7.5,
+        color="#51606F",
+    )
+
+    presentation_positions = np.arange(len(presentation_rows))
+    presentation_bottom = np.zeros(len(presentation_rows), dtype=float)
+    for field, label, color, _ in active_stage_specs:
+        values = np.asarray(
+            [float(row.get(field, 0.0) or 0.0) for row in presentation_rows]
+        )
+        axes[1].bar(
+            presentation_positions,
+            values,
+            bottom=presentation_bottom,
+            color=color,
+            label=label,
+        )
+        presentation_bottom += values
+    presentation_labels = [
+        f"{int(row['n_assets']):,}{'*' if row.get('fallback_used') else ''}"
+        for row in presentation_rows
+    ]
+    axes[1].set_xticks(presentation_positions)
+    axes[1].set_xticklabels(presentation_labels, rotation=25, ha="right")
+    axes[1].set_xlabel("Global asset universe size")
+    axes[1].set_ylabel("Wall-clock seconds")
+    runtime_title = "Where the runtime is spent"
+    if any(bool(row.get("fallback_used")) for row in presentation_rows):
+        runtime_title += " (* = guide fallback)"
+    axes[1].set_title(runtime_title)
+    axes[1].grid(axis="y", alpha=0.25)
+    axes[1].legend(frameon=False, fontsize=7.5, ncol=2, loc="upper left")
+    maximum_total = max(
+        (float(row["total_seconds"]) for row in presentation_rows),
+        default=1.0,
+    )
+    axes[1].set_ylim(0.0, 1.18 * maximum_total)
+    for position, row in zip(presentation_positions, presentation_rows):
+        axes[1].text(
+            position,
+            float(row["total_seconds"]),
+            f"{float(row['total_seconds']):.1f}s",
+            ha="center",
+            va="bottom",
+            fontsize=7.5,
+        )
+    fig.suptitle("Hybrid solver scaling with a fixed-size quantum window")
+    fig.tight_layout()
+    for suffix in ("png", "pdf"):
+        path = output / f"scaling_runtime_presentation.{suffix}"
         fig.savefig(path, dpi=220 if suffix == "png" else None, bbox_inches="tight")
         created.append(path)
     plt.close(fig)
@@ -855,6 +1357,12 @@ def _plots(summary: list[dict[str, Any]], output: Path) -> list[Path]:
         ),
         ("quantum_sampler_seconds", "Circuit sampling backend", "#F28E2B", "s"),
         ("quantum_allocation_seconds", "Exact allocation oracle", "#00A6A6", "^"),
+        (
+            "quantum_other_seconds",
+            "Circuit setup, ranking, and orchestration",
+            "#9C9C9C",
+            "P",
+        ),
     )
     quantum_summary = [
         row
@@ -932,7 +1440,8 @@ def create_scaling_plots(
     """Aggregate raw case records and write the evaluator-facing scaling figures."""
 
     output.mkdir(parents=True, exist_ok=True)
-    return _plots(_summary_rows(records), output)
+    normalised = _normalise_records(records)
+    return _plots(_summary_rows(normalised), output, normalised)
 
 
 def _environment() -> dict[str, Any]:
@@ -1077,6 +1586,8 @@ def main(argv: list[str] | None = None) -> int:
         return _worker(args.worker_spec, args.worker_output)
     if any(size < 2 for size in args.sizes):
         raise ValueError("every asset size must be at least two")
+    if len(set(args.sizes)) != len(args.sizes):
+        raise ValueError("asset sizes must be unique")
     if args.repetitions <= 0:
         raise ValueError("repetitions must be positive")
     if args.overwrite and args.resume:
@@ -1086,6 +1597,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.relaxation_time_limit <= 0.0:
         raise ValueError("relaxation_time_limit must be positive")
 
+    current_config = _resolved_config(args)
+    config_path = args.output / "scaling_config.json"
     existing_outputs = [
         args.output / name
         for name in (*OUTPUT_FILENAMES, *LEGACY_PLOT_FILENAMES)
@@ -1095,10 +1608,39 @@ def main(argv: list[str] | None = None) -> int:
         raise FileExistsError(
             f"{args.output} contains a scaling result; pass --resume or --overwrite"
         )
+    if args.resume and (args.output / "scaling_runs.csv").is_file():
+        if not config_path.is_file():
+            print(
+                "Existing scaling checkpoints have no configuration fingerprint; "
+                "use --overwrite once before resuming with this runner.",
+                file=sys.stderr,
+            )
+            return CHECKPOINT_CONFIG_MISMATCH_EXIT_CODE
+        try:
+            existing_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            print(
+                f"Could not validate existing scaling_config.json: {exc}. "
+                "Use --overwrite to start a compatible checkpoint.",
+                file=sys.stderr,
+            )
+            return CHECKPOINT_CONFIG_MISMATCH_EXIT_CODE
+        mismatch = _checkpoint_config_mismatch(existing_config, current_config)
+        if mismatch:
+            print(
+                "Existing scaling checkpoints were produced by an incompatible "
+                "configuration or result schema:\n  - "
+                + "\n  - ".join(mismatch)
+                + "\nUse --overwrite or choose a new output directory; stale rows "
+                "will not be mixed with this run.",
+                file=sys.stderr,
+            )
+            return CHECKPOINT_CONFIG_MISMATCH_EXIT_CODE
     if args.overwrite:
         for path in existing_outputs:
             path.unlink()
     args.output.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(current_config, indent=2) + "\n", encoding="utf-8")
     records = _read_csv(args.output / "scaling_runs.csv") if args.resume else []
     method_rows = _read_csv(args.output / "scaling_methods.csv") if args.resume else []
     completed_keys = {
@@ -1156,6 +1698,8 @@ def main(argv: list[str] | None = None) -> int:
                         "repetition": repetition,
                         "seed": seed,
                         "allocation_backend": args.backend,
+                        "scaling_schema_version": SCALING_SCHEMA_VERSION,
+                        "case_config_sha256": current_config["case_config_sha256"],
                     }
                 )
                 spec_path = work / f"case-{case_index}.json"
@@ -1186,11 +1730,14 @@ def main(argv: list[str] | None = None) -> int:
                 except subprocess.TimeoutExpired:
                     records.append(
                         {
+                            "scaling_schema_version": SCALING_SCHEMA_VERSION,
+                            "case_config_sha256": current_config["case_config_sha256"],
                             "study_tier": "worker_timeout",
                             "n_assets": int(size),
                             "repetition": repetition,
                             "seed": seed,
                             "success": False,
+                            "certification_optimal": False,
                             "worker_wall_seconds": float(args.case_time_limit),
                             "error": (
                                 "worker exceeded case_time_limit="
@@ -1204,11 +1751,14 @@ def main(argv: list[str] | None = None) -> int:
                 if not result_path.is_file():
                     records.append(
                         {
+                            "scaling_schema_version": SCALING_SCHEMA_VERSION,
+                            "case_config_sha256": current_config["case_config_sha256"],
                             "study_tier": "worker_failure",
                             "n_assets": int(size),
                             "repetition": repetition,
                             "seed": seed,
                             "success": False,
+                            "certification_optimal": False,
                             "worker_wall_seconds": time.perf_counter() - case_start,
                             "error": completed.stderr.strip() or completed.stdout.strip(),
                         }
@@ -1236,19 +1786,13 @@ def main(argv: list[str] | None = None) -> int:
     methods_path = args.output / "scaling_methods.csv"
     summary_path = args.output / "scaling_summary.csv"
     environment_path = args.output / "scaling_environment.json"
-    config_path = args.output / "scaling_config.json"
     _checkpoint_results(args.output, records, method_rows)
     environment_path.write_text(
         json.dumps(_environment(), indent=2) + "\n",
         encoding="utf-8",
     )
-    resolved_config = {
-        key: str(value) if isinstance(value, Path) else value
-        for key, value in vars(args).items()
-        if key not in {"worker_spec", "worker_output"}
-    }
-    config_path.write_text(json.dumps(resolved_config, indent=2) + "\n", encoding="utf-8")
-    plots = _plots(summary, args.output)
+    config_path.write_text(json.dumps(current_config, indent=2) + "\n", encoding="utf-8")
+    plots = _plots(summary, args.output, records)
     manifest_path = args.output / "scaling_manifest.json"
     manifest_path.write_text(
         json.dumps(

@@ -16,6 +16,7 @@ from .allocation import (
     solve_relaxation,
 )
 from .classical_discrete import solve_cardinality_gurobi
+from .portfolio_model import objective_value
 from .quantum_solver import QuantumSearchResult, XYQAOAConfig, solve_penalty_qaoa, solve_xy_qaoa
 from .qubo_builder import QUBOModel, build_window_qubo
 from .schemas import (
@@ -35,6 +36,11 @@ from .window_search import (
     evaluate_bitstrings,
     tabu_window_search,
 )
+
+# A time-limited continuous iterate may still be useful for ranking assets when
+# it is close to the independently validated feasible region. Larger violations
+# are not informative enough to justify replacing the known current portfolio.
+MAX_UNACCEPTED_GUIDE_VIOLATION = 1.0e-4
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,9 @@ class HybridRun:
                 bound = float(value) if bound is None else max(bound, float(value))
         rows: list[dict[str, Any]] = []
         for result in self.all_results():
+            reportable_gap = not (
+                result.model_type == "continuous_relaxation" and not result.success
+            )
             if result.model_type == "continuous_relaxation":
                 certification = (
                     "continuous_relaxation_lower_bound"
@@ -129,9 +138,11 @@ class HybridRun:
                     "iteration": result.metadata.get("iteration", ""),
                     "certification": certification,
                     "objective": result.objective,
-                    "gap_to_best": result.objective - reference,
+                    "gap_to_best": (
+                        result.objective - reference if reportable_gap else ""
+                    ),
                     "gap_to_certified_bound": ""
-                    if bound is None
+                    if bound is None or not reportable_gap
                     else result.objective - bound,
                     "runtime_seconds": result.runtime,
                     "success": result.success,
@@ -235,21 +246,37 @@ def run_hybrid_optimizer(
         if not config.allow_relaxation_fallback:
             raise ValueError(relaxation_error)
         candidate = np.asarray(relaxation.weights, dtype=float)
-        has_usable_iterate = (
+        has_finite_iterate = (
             candidate.shape == (problem.n,)
             and np.all(np.isfinite(candidate))
             and np.linalg.norm(candidate, ord=1) > 0.0
         )
+        iterate_violation = float(relaxation.max_violation)
+        has_usable_iterate = bool(
+            has_finite_iterate
+            and np.isfinite(iterate_violation)
+            and iterate_violation <= MAX_UNACCEPTED_GUIDE_VIOLATION
+        )
         guide_weights = candidate if has_usable_iterate else problem.w0.copy()
         guide_source = (
-            "unaccepted_continuous_iterate"
+            "near_feasible_unaccepted_continuous_iterate"
             if has_usable_iterate
             else "current_portfolio"
         )
         relaxation.metadata.update(
-            {"guide_source": guide_source, "fallback_used": True}
+            {
+                "guide_source": guide_source,
+                "fallback_used": True,
+                "fallback_iterate_usable": has_usable_iterate,
+                "fallback_iterate_max_violation": iterate_violation,
+            }
         )
         skipped["continuous_relaxation"] = relaxation_error
+    relaxation.metadata["guide_objective"] = objective_value(
+        guide_weights,
+        problem,
+        preferences,
+    )
     oracle = AllocationOracle(
         problem,
         preferences,
