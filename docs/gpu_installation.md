@@ -1,141 +1,94 @@
-# Qiskit Aer CPU and GPU Installation
+# Unified Qiskit CPU, GPU, and IBM QPU Installation
 
-## 1. Why Separate Environments Are Necessary
+## 1. Supported Single-Environment Stack
 
-Qiskit Aer is distributed as different packages for:
+CPU simulation, NVIDIA GPU simulation, and IBM Runtime hardware access can use
+one Python environment. The project pins:
 
-- CPU execution;
-- NVIDIA CUDA 12 or newer;
-- NVIDIA CUDA 11.
+| Component | Version | Purpose |
+|---|---:|---|
+| Qiskit | `2.5.1` | Circuits and transpilation |
+| Qiskit Aer | `0.17.2` | CPU or NVIDIA simulation |
+| IBM Runtime | `0.48.0` | IBM QPU submission |
+| Python | `3.10`–`3.13` | Available Aer wheel range |
 
-All three distributions expose the same Python import, `qiskit_aer`. Installing
-multiple Aer variants in one environment can leave conflicting files.
+On Linux x86_64, the `full` extra installs
+`qiskit-aer-gpu-cu11==0.17.2`. Despite its name, that distribution includes
+both the CPU and GPU simulator implementations. A CUDA-12/13-capable NVIDIA
+driver can run the older CUDA-11 runtime binaries bundled through pip, so this
+is also the supported choice for the RTX A6000 system.
 
-This branch also pins different Qiskit versions for different simulator stacks:
+On macOS, Windows, Linux ARM, and other unsupported GPU-wheel platforms,
+`full` installs `qiskit-aer==0.17.2` instead.
 
-| Use case | Qiskit | Aer package |
-|---|---|---|
-| CPU Aer | `qiskit>=2.0,<3` | `qiskit-aer==0.17.2` |
-| CUDA 12+ Aer | `qiskit==1.4.6` | `qiskit-aer-gpu==0.15.1` |
-| CUDA 11 Aer | `qiskit>=2.0,<3` | `qiskit-aer-gpu-cu11==0.17.2` |
-| IBM Runtime | Current Qiskit 2.x line | `qiskit-ibm-runtime>=0.40` |
+## 2. Why the Previous Split Failed
 
-The CUDA 12 simulator environment is intentionally separate from IBM Runtime
-because the pinned Aer wheel uses the Qiskit 1.4 compatibility line.
+The old installer selected `qiskit-aer-gpu==0.15.1` whenever
+`nvidia-smi` advertised CUDA 12 or newer. That stale CUDA-12 wheel required
+Qiskit 1.4.x. Current IBM Runtime requires Qiskit 2.3 or newer, so pip could
+not create a consistent CPU/GPU/QPU environment.
 
-## 2. Recommended Automatic Installation
+The fix is not to install CPU Aer and GPU Aer together. All Aer distributions
+write the same `qiskit_aer` package tree. The fix is to install exactly one
+current GPU-capable Aer distribution that also supplies CPU execution.
 
-From the repository root:
+## 3. Clean Installation
 
-```bash
-python scripts/install_environment.py --profile full
-```
-
-The installer:
-
-1. checks the operating system and machine architecture;
-2. runs `nvidia-smi` when available;
-3. reads the CUDA compatibility version reported by the driver;
-4. selects the matching project extra;
-5. removes conflicting Qiskit/Aer distributions;
-6. removes IBM Runtime packages from GPU simulator environments;
-7. installs the editable project;
-8. runs `pip check`;
-9. imports Aer;
-10. executes a real simulator job;
-11. verifies that GPU execution is actually available when a GPU package was
-    selected.
-
-The installer falls back to CPU on unsupported operating systems,
-architectures, old CUDA drivers, or machines without a working NVIDIA setup.
-
-## 3. Preview Without Changing the Environment
+Create and activate one environment, then run from the repository root:
 
 ```bash
-python scripts/install_environment.py \
-  --profile full \
-  --dry-run
-```
-
-## 4. Install Only Quantum Dependencies
-
-```bash
-python scripts/install_environment.py --profile quantum
-```
-
-## 5. Force CPU Aer
-
-```bash
-python scripts/install_environment.py \
-  --profile full \
-  --force-cpu
-```
-
-## 6. Recommended Environments
-
-### 6.1 Portable CPU Aer and IBM Runtime
-
-```bash
-python -m venv .venv-vanguard-cpu
-source .venv-vanguard-cpu/bin/activate
 python -m pip install --upgrade pip
-python scripts/install_environment.py --profile full --force-cpu
-python -m pip check
-```
-
-This environment can contain CPU Aer and IBM Runtime together.
-
-### 6.2 CUDA 12+ Aer GPU
-
-```bash
-conda create -n vanguard-aer-gpu python=3.11 -y
-conda activate vanguard-aer-gpu
-python scripts/install_environment.py --profile full
-python -m pip check
-```
-
-Do not install current IBM Runtime into this environment.
-
-### 6.3 IBM Runtime Hardware
-
-```bash
-conda create -n vanguard-ibm-runtime python=3.11 -y
-conda activate vanguard-ibm-runtime
-python -m pip install --upgrade pip
-python -m pip install -e ".[qp,ibm-runtime,test]"
-python -m pip check
-```
-
-The simulator and hardware environments may use the same repository checkout
-and YAML configuration files.
-
-## 7. Explicit Extras
-
-The repository exposes:
-
-```bash
-python -m pip install -e ".[quantum-cpu]"
-python -m pip install -e ".[quantum-gpu]"
-python -m pip install -e ".[quantum-gpu-cu11]"
-```
-
-Complete-stack variants are:
-
-```bash
 python -m pip install -e ".[full]"
-python -m pip install -e ".[full-gpu]"
-python -m pip install -e ".[full-gpu-cu11]"
+python -m pip check
+python scripts/install_environment.py --verify-only
 ```
 
-`full-gpu` and `full-gpu-cu11` intentionally exclude IBM Runtime.
+After installation, restart the Jupyter kernel and confirm that
+`sys.executable` points to this environment.
 
-## 8. Verify the Installed Aer Distribution
+The `full` extra also installs pandas, JupyterLab, and ipykernel because the
+presentation notebook uses them directly.
+
+## 4. Repair an Existing Environment
+
+Plain pip cannot infer that `qiskit-aer`, `qiskit-aer-gpu`, and
+`qiskit-aer-gpu-cu11` overwrite the same import files. If this environment
+has ever used another Aer/Qiskit profile, run:
 
 ```bash
-python - <<'PY'
+python scripts/install_environment.py
+```
+
+The repair script:
+
+1. removes all Aer distributions, Qiskit/Terra, and Runtime schema helpers;
+2. installs the pinned `full` extra;
+3. runs `pip check`;
+4. verifies that exactly one Aer distribution exists;
+5. imports Qiskit, Aer, and IBM Runtime together;
+6. executes a real Aer CPU job;
+7. executes a real Aer GPU job when a GPU is visible through `nvidia-smi`.
+
+Preview the repair without changing the environment:
+
+```bash
+python scripts/install_environment.py --dry-run
+```
+
+Verify an already installed environment without changing it:
+
+```bash
+python scripts/install_environment.py --verify-only
+```
+
+## 5. Verify From Python
+
+```python
 from importlib import metadata
+
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 
 for name in (
     "qiskit",
@@ -149,119 +102,112 @@ for name in (
     except metadata.PackageNotFoundError:
         pass
 
-devices = AerSimulator().available_devices()
-print("Available Aer devices:", devices)
+devices = tuple(AerSimulator().available_devices())
+print("Aer devices:", devices)
 
+simulator = AerSimulator(method="statevector", device="CPU")
 circuit = QuantumCircuit(2)
 circuit.h(0)
 circuit.cx(0, 1)
 circuit.measure_all()
-
-simulator = AerSimulator()
 compiled = transpile(circuit, simulator)
 result = simulator.run(compiled, shots=128).result()
-print("Execution success:", result.success)
-print("Counts:", result.get_counts())
-PY
+print("CPU success:", result.success, result.get_counts())
+print("IBM Runtime imports:", QiskitRuntimeService, SamplerV2)
 ```
 
-For a correctly configured NVIDIA environment, the available device tuple must
-include `GPU`.
+A GPU-capable wheel can advertise `"GPU"` even when a container has no CUDA device. The repository verifier therefore submits a real GPU job when `nvidia-smi` sees a device; package names and `available_devices()` alone are not accepted as proof.
 
-## 9. Run the Hybrid Model With Aer GPU
+## 6. IBM Account Setup
 
-The YAML file may set:
+Package installation does not authenticate an IBM account. Save the account
+once outside committed files:
 
-```yaml
-hybrid:
-  quantum:
-    backend: aer_gpu
+```python
+from getpass import getpass
+from qiskit_ibm_runtime import QiskitRuntimeService
+
+QiskitRuntimeService.save_account(
+    channel="ibm_quantum_platform",
+    token=getpass("IBM Quantum API token: "),
+    overwrite=True,
+    set_as_default=True,
+)
 ```
 
-or the command line may override it:
+Never place the token in YAML, notebooks, shell scripts, logs, or Git history.
 
-```bash
-python scripts/run_hybrid.py \
-  --config configs/large_hybrid.yaml \
-  --quantum-backend aer_gpu \
-  --overwrite
-```
+## 7. Notebook Execution
 
-Inspect `quantum_execution.csv` and `hybrid_diagnostics.json` to confirm the
-actual device. A requested GPU backend is not proof that GPU execution occurred.
+Run the presentation notebook from this same kernel. Section 11 checks:
 
-## 10. What the GPU Accelerates
+- the pinned Qiskit and Runtime versions;
+- that exactly one Aer distribution is installed;
+- IBM account availability;
+- backend access, status, and qubit capacity.
 
-In the final hybrid path:
+The hardware experiment checkpoints
+`results/presentation_benchmark_suite/ibm_qpu_hardware_validation.csv` after
+every result. With `QPU_RESUME=True`, reruns skip successful jobs and retry
+only missing or failed jobs.
 
-1. the exact fixed-cardinality subspace simulator optimizes QAOA angles on the
-   CPU;
-2. Aer CPU or GPU samples the corresponding physical circuit after the angles
-   are selected.
+## 8. What the GPU Accelerates
 
-For the default 16-qubit, 7-excitation window, the compact subspace has only
+The fixed-weight subspace optimizer still chooses QAOA angles on the CPU. Aer
+CPU/GPU then samples the physical circuit with those angles. For a default
+16-qubit, 7-excitation window, the compact optimization space contains
 
 $$
 \binom{16}{7}=11{,}440
 $$
 
-states. Repeatedly launching small sequential COBYLA evaluations on a GPU may be
-slower than the compact CPU calculation.
+states, so CPU angle optimization can be faster than launching many small GPU
+kernels. GPU Aer is most useful for wider circuits, higher shot counts, and
+controlled CPU-versus-GPU sampling comparisons.
 
-GPU Aer is most useful for:
+Aer does not accelerate OSQP, fixed-support allocation, the full-universe
+factor QP, or Gurobi.
 
-- physical-circuit sampling;
-- larger circuit widths;
-- higher shot counts;
-- explicit CPU-versus-GPU backend comparisons.
+## 9. Troubleshooting
 
-It does not accelerate the full-universe factor QP, support allocation, or
-Gurobi model unless those components use their own accelerator-enabled
-software.
+### More Than One Aer Distribution Is Installed
 
-## 11. Common Problems
+```bash
+python -m pip list | grep -E 'qiskit|aer'
+python scripts/install_environment.py
+```
 
-### Aer Imports but No GPU Is Available
+Do not install `qiskit-aer` alongside either GPU Aer distribution.
 
-Check:
+### GPU Is Visible to `nvidia-smi` but Not Aer
 
 ```bash
 nvidia-smi
 python -c "from qiskit_aer import AerSimulator; print(AerSimulator().available_devices())"
 ```
 
-A CPU-only Aer package may still import successfully.
+Confirm that the NVIDIA device is exposed to the Python process or container.
+Then inspect `LD_LIBRARY_PATH` only if the repair script reports a loader
+failure. The solver automatically falls back to Aer CPU for normal local runs,
+but the installation verifier deliberately fails when `nvidia-smi` sees a
+GPU and Aer cannot use it.
 
-### Conflicting Aer Packages
+### IBM Runtime Imports but Has No Account
 
-Remove all variants and reinstall one:
+Run the one-time `save_account` block above. Do not pass the token through a
+notebook configuration or command-line argument.
 
-```bash
-python -m pip uninstall -y \
-  qiskit-aer \
-  qiskit-aer-gpu \
-  qiskit-aer-gpu-cu11
+### Jupyter Still Imports Old Packages
+
+Restart the kernel and print:
+
+```python
+import sys
+print(sys.executable)
 ```
 
-Then rerun the repository installer.
+Install with that exact interpreter if it differs from the terminal:
 
-### Qiskit Version Conflict
-
-Do not upgrade the CUDA 12 environment to Qiskit 2.x while retaining
-`qiskit-aer-gpu==0.15.1`.
-
-### IBM Runtime Breaks the CUDA 12 Environment
-
-Create a separate IBM Runtime environment rather than trying to satisfy both
-stacks with one set of packages.
-
-## 12. Security
-
-IBM credentials must be stored through the supported Runtime account
-configuration. Never commit tokens to:
-
-- YAML files;
-- notebooks;
-- shell scripts;
-- logs;
-- Git history.
+```bash
+/path/from/sys/executable -m pip install -e ".[full]"
+```

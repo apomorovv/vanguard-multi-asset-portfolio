@@ -4,8 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_environment.py"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "install_environment.py"
 SPEC = importlib.util.spec_from_file_location("install_environment", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -13,72 +13,59 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
-def test_parse_cuda_major() -> None:
-    output = "NVIDIA-SMI 580.159.04  Driver Version: 580.159.04  CUDA Version: 13.0"
-    assert MODULE.parse_cuda_major(output) == 13
-    assert MODULE.parse_cuda_major("no CUDA field") is None
-
-
-def test_cuda_13_selects_cuda_12_gpu_wheel() -> None:
-    choice = MODULE.choose_accelerator(
-        system="Linux",
-        machine="x86_64",
-        nvidia_smi_output="CUDA Version: 13.0",
+def test_linux_x86_64_selects_runtime_compatible_gpu_aer() -> None:
+    assert MODULE.supports_gpu_wheel(system="Linux", machine="x86_64")
+    assert (
+        MODULE.expected_aer_distribution(system="Linux", machine="x86_64")
+        == "qiskit-aer-gpu-cu11"
     )
-    assert choice.expect_gpu
-    assert choice.cuda_major == 13
-    assert choice.extra == "quantum-gpu"
-    assert choice.aer_distribution.startswith("qiskit-aer-gpu")
-    assert "cu11" not in choice.aer_distribution
-    assert MODULE.project_extra("full", choice) == "full-gpu"
-    removed = MODULE.cleanup_distributions(choice)
-    assert "qiskit-ibm-runtime" in removed
-    assert "samplomatic" in removed
-    assert "ibm-quantum-schemas" in removed
+    assert MODULE.PINNED_VERSIONS == {
+        "qiskit": "2.5.1",
+        "qiskit-aer": "0.17.2",
+        "qiskit-aer-gpu-cu11": "0.17.2",
+        "qiskit-ibm-runtime": "0.48.0",
+    }
 
 
-def test_cuda_11_selects_cu11_wheel() -> None:
-    choice = MODULE.choose_accelerator(
-        system="Linux",
-        machine="x86_64",
-        nvidia_smi_output="CUDA Version: 11.8",
+def test_non_linux_or_non_x86_uses_cpu_aer() -> None:
+    assert not MODULE.supports_gpu_wheel(system="Darwin", machine="arm64")
+    assert not MODULE.supports_gpu_wheel(system="Linux", machine="aarch64")
+    assert (
+        MODULE.expected_aer_distribution(system="Darwin", machine="arm64")
+        == "qiskit-aer"
     )
-    assert choice.expect_gpu
-    assert choice.extra == "quantum-gpu-cu11"
-    assert choice.aer_distribution.startswith("qiskit-aer-gpu-cu11")
-    assert MODULE.project_extra("full", choice) == "full-gpu-cu11"
-    assert "qiskit-ibm-runtime" in MODULE.cleanup_distributions(choice)
 
 
-def test_missing_gpu_uses_cpu_wheel() -> None:
-    choice = MODULE.choose_accelerator(
-        system="Linux",
-        machine="x86_64",
-        nvidia_smi_output=None,
-    )
-    assert not choice.expect_gpu
-    assert choice.extra == "quantum-cpu"
-    assert choice.aer_distribution.startswith("qiskit-aer")
-    assert MODULE.project_extra("full", choice) == "full"
-    assert "qiskit-ibm-runtime" not in MODULE.cleanup_distributions(choice)
+def test_repair_removes_every_overlapping_distribution() -> None:
+    removed = MODULE.cleanup_distributions()
+    for name in (
+        "qiskit",
+        "qiskit-terra",
+        "qiskit-aer",
+        "qiskit-aer-gpu",
+        "qiskit-aer-gpu-cu11",
+        "qiskit-ibm-runtime",
+        "samplomatic",
+        "ibm-quantum-schemas",
+    ):
+        assert name in removed
 
 
-def test_non_linux_uses_cpu_wheel() -> None:
-    choice = MODULE.choose_accelerator(
-        system="Darwin",
-        machine="arm64",
-        nvidia_smi_output="CUDA Version: 13.0",
-    )
-    assert not choice.expect_gpu
-    assert choice.extra == "quantum-cpu"
+def test_full_extra_contains_one_platform_selected_aer_and_runtime() -> None:
+    configuration = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    full = configuration.split("full = [", maxsplit=1)[1].split("]", maxsplit=1)[0]
+    assert '"qiskit==2.5.1"' in full
+    assert '"qiskit-ibm-runtime==0.48.0"' in full
+    assert "qiskit-aer-gpu-cu11==0.17.2" in full
+    assert "qiskit-aer==0.17.2" in full
+    assert "qiskit-aer-gpu==" not in full
+    assert "jupyterlab" in full
+    assert "ipykernel" in full
 
 
-def test_force_cpu_overrides_gpu() -> None:
-    choice = MODULE.choose_accelerator(
-        system="Linux",
-        machine="x86_64",
-        nvidia_smi_output="CUDA Version: 13.0",
-        force_cpu=True,
-    )
-    assert not choice.expect_gpu
-    assert choice.extra == "quantum-cpu"
+def test_installer_dry_run_uses_only_full_extra(capsys) -> None:
+    assert MODULE.main(["--dry-run"]) == 0
+    output = capsys.readouterr().out
+    assert "[full]" in output
+    assert "full-gpu" not in output
+    assert "qiskit-aer-gpu==0.15.1" not in output

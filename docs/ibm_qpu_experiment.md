@@ -59,36 +59,41 @@ portfolio-quality or speed result.
 
 ## 4. Environment
 
-Use a separate environment from the CUDA 12 Aer GPU stack:
+Use the same pinned environment for CPU Aer, NVIDIA Aer, and IBM Runtime:
 
 ```bash
-python -m venv .venv-ibm-runtime
-source .venv-ibm-runtime/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[qp,ibm-runtime,test]"
+python -m pip install -e ".[full]"
 python -m pip check
+python scripts/install_environment.py --verify-only
 ```
 
-Configure credentials with the supported `qiskit-ibm-runtime` account
-mechanism. Never place an API token in repository files.
+If the environment previously contained Qiskit 1.4 or another Aer
+distribution, repair it first:
 
-To configure the ibm_runtime account setup, before running any ibm_runtime backend commands, register credentials once — outside the repo, never in a config file:
 ```bash
+python scripts/install_environment.py
+```
+
+Restart Jupyter after installation. Configure the IBM account once through the
+supported Runtime mechanism; never store a token in this repository:
+
+```python
+from getpass import getpass
 from qiskit_ibm_runtime import QiskitRuntimeService
 
 QiskitRuntimeService.save_account(
-    channel="ibm_quantum_platform",   # or "ibm_cloud", depending on your account type
-    token="<your IBM token>",
+    channel="ibm_quantum_platform",
+    token=getpass("IBM Quantum API token: "),
     overwrite=True,
+    set_as_default=True,
 )
 ```
 
-Run this once inside the .venv-ibm-runtime environment (§4). It writes to ~/.qiskit/qiskit-ibm-runtime.json on your machine — not into the repository. Get the token from your IBM Quantum account page before calling save_account.
-After this one-time setup, every subsequent run (including run_hybrid.py --quantum-backend ibm_runtime) picks up the saved account automatically via:
-```bash
-service = QiskitRuntimeService()
-```
-No token needs to be passed on the command line or stored in any YAML config.
+Subsequent runs use the saved default account through
+`QiskitRuntimeService()`. Section 11 of the presentation notebook validates
+the package versions, saved account, backend status, and available qubit count
+before submitting a job.
 
 ## 5. Backend Selection
 

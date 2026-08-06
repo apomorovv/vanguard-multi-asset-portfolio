@@ -16,15 +16,11 @@ pytest-cov>=5.0
 # Gurobi requires a separate license. Uncomment if it is not already installed.
 # gurobipy>=11.0
 
-# Portable CPU quantum simulation (optional).
-# qiskit>=2.0
-# qiskit-aer>=0.17
-
-# IBM hardware access (optional; use a separate environment from CUDA 12 Aer).
-# qiskit-ibm-runtime>=0.40
-
-# For GPU simulation, do not uncomment packages here. Run:
-# python scripts/install_environment.py --profile full
+# The pinned CPU/GPU/QPU stack is defined by the ``full`` project extra.
+# Do not list an Aer distribution here: CPU Aer and both GPU Aer packages own
+# the same ``qiskit_aer`` import tree.  From the repository root run either:
+# python -m pip install -e ".[full]"       # clean environment
+# python scripts/install_environment.py    # repair or install, then verify
 
 # Interactive Copilot (optional).
 # streamlit>=1.40

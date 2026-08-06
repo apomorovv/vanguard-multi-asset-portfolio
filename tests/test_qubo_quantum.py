@@ -10,6 +10,7 @@ from vanguard_portfolio.quantum_solver import (
     XYQAOAConfig,
     _basis_energies,
     _fixed_weight_structure,
+    _runtime_quantum_seconds,
     _subspace_state,
     build_xy_qaoa_circuit,
     solve_xy_qaoa,
@@ -19,6 +20,35 @@ from vanguard_portfolio.schemas import Preferences
 
 
 class QUBOAndQuantumTests(unittest.TestCase):
+    def test_runtime_usage_prefers_current_usage_estimation_api(self) -> None:
+        class Job:
+            def __init__(self) -> None:
+                self.usage_estimation = {"quantum_seconds": 1.25}
+
+            def metrics(self):
+                return {"usage": {"quantum_seconds": 9.0}}
+
+        self.assertEqual(_runtime_quantum_seconds(Job()), 1.25)
+
+    def test_runtime_usage_supports_metrics_and_legacy_usage(self) -> None:
+        class MetricsJob:
+            usage_estimation = None
+
+            def metrics(self):
+                return {"usage": {"quantum_seconds": 2.5}}
+
+        class LegacyJob:
+            usage_estimation = None
+
+            def metrics(self):
+                raise RuntimeError("metrics unavailable")
+
+            def usage(self):
+                return 3.75
+
+        self.assertEqual(_runtime_quantum_seconds(MetricsJob()), 2.5)
+        self.assertEqual(_runtime_quantum_seconds(LegacyJob()), 3.75)
+
     def test_window_qubo_matches_equal_notional_proxy(self) -> None:
         problem = generate_synthetic_universe()
         preferences = Preferences()
