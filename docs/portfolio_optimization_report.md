@@ -541,7 +541,8 @@ continuous relaxation is allowed to use arbitrary weights and can therefore
 have a slightly lower objective. It also shows why solver choice matters:
 SLSQP agrees numerically but takes roughly 500 times as long as OSQP in this
 case, while the exact Gurobi discrete solve is much faster than the tested swap
-heuristics.
+heuristics. Note that the following risk-return comparison plot includes multiple
+runs on stochastic solvers such as simulated annealing swap (10 runs). 
 
 ![Independent classical solver runtime](../results/archive/large_example/runtime_comparison.png)
 
