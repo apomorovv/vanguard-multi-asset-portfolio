@@ -1,0 +1,5 @@
+backend,method,status,success,feasible,objective,runtime_seconds,breaches,max_violation,iterations
+scipy,scipy_slsqp,Optimization terminated successfully,True,True,-0.04914075260563814,1.4516578614711761,0,2.220446049250313e-16,61.0
+osqp,osqp,solved,True,True,-0.049140752869922796,0.004066679626703262,0,5.83821144206631e-10,275.0
+cvxpy:CLARABEL,cvxpy_clarabel,optimal,True,True,-0.049140751526019724,0.008745640516281128,0,2.220446049250313e-16,10.0
+gurobi,gurobi_qp,optimal,True,True,-0.04914075293227889,0.018984097987413406,0,7.257816569961051e-11,0.0

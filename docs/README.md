@@ -1,89 +1,32 @@
-# Documentation Guide
+# Documentation guide
 
-This directory explains the mathematical model, the classical and quantum
-algorithms, the validation rules, and the reproducible experiment workflow used
-by the project.
+The documentation moves from the investment problem to the implementation and
+then to the evidence. New readers should follow the first column in order.
 
-The final production path is:
+| Order | Document | What it answers |
+|---:|---|---|
+| 1 | [`portfolio_optimization_report.md`](portfolio_optimization_report.md) | What was studied, what the literature says, what was found, and what is not claimed? |
+| 2 | [`presentation/portfolio_optimization_challenge_deck.pdf`](presentation/portfolio_optimization_challenge_deck.pdf) | What is the concise challenge story? |
+| 3 | [`presentation/README.md`](presentation/README.md) | How should the deck be delivered and which evidence backs each slide? |
+| 4 | [`mathematical_model.md`](mathematical_model.md) | What are the variables, objective terms, and financial guardrails? |
+| 5 | [`final_hybrid_model.md`](final_hybrid_model.md) | How does the end-to-end solver produce and validate a portfolio? |
+| 6 | [`classical_model_formulation.md`](classical_model_formulation.md) | Which continuous, mixed-integer, enumeration, annealing, and LNS baselines are implemented? |
+| 7 | [`quantum_model_formulation.md`](quantum_model_formulation.md) | How are the window QUBO, XY mixer, candidate decoding, and allocation handoff defined? |
+| 8 | [`validation_protocol.md`](validation_protocol.md) | What must pass before a result can be accepted? |
+| 9 | [`ibm_qpu_experiment.md`](ibm_qpu_experiment.md) | How should IBM hardware be run and compared fairly? |
+| 10 | [`installation.md`](installation.md) | How are CPU, GPU, Gurobi, and IBM environments installed? |
 
-```mermaid
-flowchart TD
-    A["Portfolio data and factor-risk model"] --> B["Full-universe convex relaxation"]
-    B --> C["Valid exact-cardinality initial portfolio"]
-    C --> D["Adaptive change window"]
-    D --> E["Classical LNS or fixed-cardinality XY-QAOA"]
-    E --> F["Fixed-support continuous allocation oracle"]
-    F --> G["Independent full-universe validation"]
-    G -->|"valid and better"| C
-    C --> H["Optional Gurobi MIQP reference"]
-```
+The machine-readable audit trail is in
+[`../results/final_submission/`](../results/final_submission/). Use its claim
+map rather than reading numerical values from figures by eye.
 
-The quantum component proposes asset combinations inside a small change window.
-It does not assign final portfolio weights and does not bypass any financial
-constraint.
+## Core distinction
 
-## Recommended Reading Order
+- **Support selection** chooses the assets.
+- **Allocation** assigns continuous portfolio percentages.
+- **Validation** recomputes every financial rule.
+- **Certification** supplies a bound on global solution quality when an exact
+  mixed-integer solver completes.
 
-| Document | Purpose |
-|---|---|
-| [`mathematical_model.md`](mathematical_model.md) | Defines all data, variables, objective terms, and hard constraints. |
-| [`final_hybrid_model.md`](final_hybrid_model.md) | Explains the complete hybrid algorithm from input validation to final output. |
-| [`quantum_model_formulation.md`](quantum_model_formulation.md) | Defines the final fixed-cardinality XY-QAOA window model, circuit, decoding, and classical handoff. |
-| [`classical_model_formulation.md`](classical_model_formulation.md) | Explains the continuous, equal-lot, local-search, and Gurobi classical baselines. |
-| [`validation_protocol.md`](validation_protocol.md) | Defines the checks required before a result can be accepted or reported. |
-| [`gpu_installation.md`](gpu_installation.md) | Describes reproducible Qiskit Aer CPU/GPU environments. |
-| [`ibm_qpu_experiment.md`](ibm_qpu_experiment.md) | Defines the IBM hardware experiment and fair reporting requirements. |
-| [`portfolio_optimization_report.md`](portfolio_optimization_report.md) | Presents the research motivation, method, interpretation, and limitations. |
-
-## Terminology
-
-- **Asset universe:** every asset that may be considered by the optimizer.
-- **Support:** the set of assets with positive portfolio weight.
-- **Cardinality:** the number of selected assets.
-- **Allocation:** the continuous percentage assigned to each selected asset.
-- **Relaxation:** a simpler optimization problem obtained by temporarily
-  removing exact-cardinality and minimum-active-weight requirements.
-- **Change window:** a small subset of held and unheld assets considered for a
-  local support update.
-- **Allocation oracle:** the continuous optimizer that assigns exact weights to
-  a proposed support and rejects infeasible supports.
-- **QUBO:** a quadratic unconstrained binary optimization surrogate used to rank
-  window bitstrings.
-- **XY-QAOA:** a quantum alternating-operator algorithm whose mixer preserves
-  the number of selected window assets in the ideal circuit.
-- **Incumbent:** the best feasible solution currently known to a mixed-integer
-  solver.
-- **Best bound:** a solver bound on the unknown global optimum.
-- **MIP gap:** the normalized difference between the incumbent and best bound.
-- **Independent validation:** recomputing every hard constraint directly from
-  the returned weights instead of trusting a solver status alone.
-
-## Source of Truth
-
-The canonical data structures and objective are implemented in:
-
-- [`../src/vanguard_portfolio/schemas.py`](../src/vanguard_portfolio/schemas.py)
-- [`../src/vanguard_portfolio/portfolio_model.py`](../src/vanguard_portfolio/portfolio_model.py)
-
-The final hybrid pipeline is implemented in:
-
-- [`../src/vanguard_portfolio/hybrid.py`](../src/vanguard_portfolio/hybrid.py)
-- [`../src/vanguard_portfolio/allocation.py`](../src/vanguard_portfolio/allocation.py)
-- [`../src/vanguard_portfolio/window_search.py`](../src/vanguard_portfolio/window_search.py)
-- [`../src/vanguard_portfolio/qubo_builder.py`](../src/vanguard_portfolio/qubo_builder.py)
-- [`../src/vanguard_portfolio/quantum_solver.py`](../src/vanguard_portfolio/quantum_solver.py)
-- [`../src/vanguard_portfolio/validation.py`](../src/vanguard_portfolio/validation.py)
-
-If prose and code disagree, the disagreement must be resolved before a result is
-reported. Documentation should not silently describe a model that the software
-does not solve.
-
-## Generated Results
-
-Experiment folders under `results/` are generated artifacts rather than source
-code. Preserve a complete result package when citing a number. A valid package
-contains the resolved configuration, problem data or fingerprint, raw CSV/JSON
-tables, validation checks, solver diagnostics, environment metadata, figures,
-and artifact checksums.
-
-Plots are explanatory. The CSV and JSON files are the auditable evidence.
+The quantum component participates only in support selection inside a small
+adaptive window. It never assigns the final percentages or bypasses validation.
