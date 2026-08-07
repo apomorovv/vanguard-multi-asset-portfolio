@@ -150,14 +150,3 @@ it must not break the portable classical path.
   QPU usage from service wall time.
 - Record unsuccessful experiments and limitations; do not select only favorable
   seeds, calibrations, or plots.
-
-## Final contribution and tooling disclosure
-
-The final submission must include this named contribution record and links to
-the corresponding commits, notebook sections, or experiment manifests. Each
-member reviews the description of their own contribution before submission.
-
-AI-assisted coding or writing must be disclosed. AI output is not experimental
-evidence: the team is responsible for reviewing the equations, code, tests,
-citations, numerical results, and claims, and every member must be able to
-explain the part attributed to them.
