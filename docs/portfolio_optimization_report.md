@@ -1043,20 +1043,14 @@ A practical path from the current prototype to industrial use is:
 
 The main future research goal is therefore not simply to make the optimizer larger. It is to make it **better informed, more robust, easier to explain, and safer to operate with real investment data**.
 
-The strongest long-term architecture would combine
+The strongest long-term architecture would combine:
 
-$$
-\boxed{
-\begin{aligned}
-&\text{real data} \\
-&+\,\text{robust forecasts} \\
-&+\,\text{realistic trading costs} \\
-&+\,\text{multi-period decisions} \\
-&+\,\text{scalable optimization} \\
-&+\,\text{independent validation}
-\end{aligned}
-}
-$$
+- Real data
+- Robust forecasts
+- Realistic trading costs
+- Multi-period decisions
+- Scalable optimization
+- Independent validation
 
 while keeping quantum computing as a replaceable candidate-generation component. This makes the system useful with today's classical methods while preserving a clear path for future quantum improvements.
 
