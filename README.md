@@ -5,11 +5,11 @@ and refuses any result that breaks the configured financial guardrails. It
 combines a scalable classical optimizer, classical large-neighborhood search,
 and an optional fixed-cardinality quantum proposal step.
 
-The central design is simple:
+The central design:
 
-> Search methods propose **which assets to hold**. A classical allocation model
-> assigns **how much to invest**, and an independent validator decides whether
-> the portfolio is safe to report.
+> Quantum computing proposes asset swaps inside a small adaptive window.
+> Classical optimization assigns percentages, enforces every financial
+> guardrail, and supplies the final answer and optimality evidence.
 
 The final study does not claim quantum advantage. It shows a production-safe
 solver today and a fair, auditable interface for quantum experiments.
