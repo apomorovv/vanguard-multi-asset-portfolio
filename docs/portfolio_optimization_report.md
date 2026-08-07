@@ -774,8 +774,7 @@ than presented as a scaling advantage.
 ### 5.8 IBM QPU audit
 
 The hardware campaign uses `ibm_kingston` version 1.0.0 with calibration
-timestamp 2026-08-07 00:37:20-04:00. Runtime job
-`d9qmec1dsedc73afg2d0` packs ten cases with 8,192 shots each and three repeated
+timestamp 2026-08-07 00:37:20-04:00. It packs ten cases with 8,192 shots each and three repeated
 observations per case. Widths range from 8 to 28 qubits; depths range from one
 to three where tested. The circuits contain 101-483 two-qubit gates and
 transpiled depths of 171-923.
