@@ -94,6 +94,7 @@ def test_notebook_uses_safe_defaults_and_resumable_qpu_jobs() -> None:
         "QPU_STRESS_FRONTIER_BEST_MODE": "baseline",
         "QPU_STRESS_ENABLE_FRACTIONAL_GATES": False,
         "RUN_SCALING_STRETCH": False,
+        "RUN_SCENARIO_PENALTY_SWEEP": True,
         "QP_TOLERANCE": 1.0e-9,
         "ALLOW_GUIDE_FALLBACK": True,
     }
@@ -165,3 +166,61 @@ def test_offline_quantum_audit_is_safe_without_saved_hardware_results() -> None:
     assert "Final quantum audit skipped: no saved frontier hardware results" in audit_code
     assert "RUN_FINAL_QUANTUM_AUDIT = False" in audit_code
     assert "raise FileNotFoundError" not in audit_code
+
+
+def test_scenario_penalty_experiment_is_controlled_and_validated() -> None:
+    notebook = _load_notebook()
+    gauntlet_index = _heading_index(
+        notebook,
+        "## 6. Experiment C — all-constraints validity and sparse-CVaR scaling",
+    )
+    penalty_index = _heading_index(
+        notebook,
+        "## 6A. Experiment D - scenario-based CVaR penalty frontier",
+    )
+    ablation_index = _heading_index(
+        notebook,
+        "### Optional constraint ablation (off by default)",
+    )
+    assert gauntlet_index < penalty_index < ablation_index
+
+    markdown = _cell_source(notebook["cells"][penalty_index])
+    code = next(
+        _cell_source(cell)
+        for cell in notebook["cells"][penalty_index + 1 :]
+        if cell.get("cell_type") == "code"
+    )
+    assignments = _literal_assignments(notebook)
+
+    assert assignments["SCENARIO_PENALTY_WEIGHTS"] == [
+        (0.0, 0.05, 0.10, 0.25, 0.50, 1.0)
+    ]
+    assert assignments["SCENARIO_PENALTY_ALPHA"] == [0.95]
+    assert assignments["SCENARIO_PENALTY_TRAIN_SCENARIOS"] == [2_000]
+    assert assignments["SCENARIO_PENALTY_TEST_SCENARIOS"] == [20_000]
+    assert assignments["SCENARIO_PENALTY_REPETITIONS"] == [5]
+
+    assert "Rockafellar and Uryasev (2000)" in markdown
+    assert "Krokhmal, Palmquist, and Uryasev (2002)" in markdown
+    assert "penalty_multiplier" in markdown
+    assert "financial downside preference" in markdown
+    assert "exact-$K=20$ support" in markdown
+
+    assert "penalty_weight * training_cvar_expression" in code
+    assert "heldout_scenarios = generate_return_scenarios" in code
+    assert "validate_weights(" in code
+    assert "if not report.feasible:" in code
+    assert "Scenario-penalty control support does not match exact cardinality" in code
+    assert '"qpu_jobs_submitted": 0' in code
+    assert '"qubo_penalty_multiplier_used": False' in code
+    assert "run_hybrid_optimizer(" not in code
+    assert "RUN_IBM_QPU" not in code
+
+    for artifact in (
+        "scenario_penalty_runs.csv",
+        "scenario_penalty_summary.csv",
+        "scenario_penalty_constraint_checks.csv",
+        "scenario_penalty_frontier.{suffix}",
+        "scenario_penalty_allocation_shift.{suffix}",
+    ):
+        assert artifact in code
