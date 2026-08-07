@@ -96,13 +96,34 @@ factor optimization and validation continue to cover the whole universe.
 ## Portfolio model
 
 For new weights $w$, current weights $w^0$, expected return $\mu$, income yield $y$, covariance $\Sigma$, 
-trading costs $c$, and absolute turnover variables $t$, the canonical objective is 
+trading costs $c$, and absolute turnover variables $t$, the main model minimizes 
 
-$$ \min_{w, t}\; \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt $$
+$$ \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^T|w-w^0|, $$
+
+subject to, when enabled, 
+
+$$
+\begin{aligned}
+&\mathbf{1}^T w=1,\qquad w_i\ge0,\\
+&m_i z_i\le w_i\le u_i z_i,\\
+&\sum_i z_i=K,\\
+&L_g\le\sum_{i\in g}w_i\le U_g,\\
+&\mu^T w\ge R_{\min},\quad y^T w\ge Y_{\min},\\
+&\|w-w^0\|_1\le T_{\max},\\
+&f_{\min}\le B^T w\le f_{\max},\\
+&r_s^T w\ge s_s,\quad \text{CVaR}_\alpha(w)\le C_{\max}.
+\end{aligned}
+$$
+
+The benchmark normally enforces the following conditions:
+
+$$ \mathbf 1^T w=1,\qquad m_i z_i\le w_i\le u_i z_i,\qquad \sum_i z_i=K $$
+
+*   **Group Bounds & Turnover:** Enforced alongside a standard turnover cap.
+*   **Advanced Limits:** Eligibility, mandatory holdings, income, factor exposure, stress-return, and empirical-CVaR limits are available when data supports them.
 
 Risk and cost are minimized; expected growth and income are rewarded. Lower objective values are better, but 
 the objective is a composite ranking score, not a return percentage.
-
 
 The model can enforce:
 
