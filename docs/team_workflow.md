@@ -1,10 +1,6 @@
 # Team Workflow and Contribution Record
 
-This document assigns ownership for the three-person WISER Vanguard challenge
-team and defines how model, quantum, and engineering changes are reviewed. The
-goal is clear responsibility without creating isolated workstreams: every final
-claim must be reproducible from the shared repository and understandable by all
-three team members.
+This document assigns ownership for our  team and defines how model, quantum, and engineering changes are reviewed.
 
 ## Team and primary roles
 
