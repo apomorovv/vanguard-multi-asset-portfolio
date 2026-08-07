@@ -210,7 +210,7 @@ $$
 -\lambda_y y^\top w
 +\lambda_c c^\top t
 +\lambda_s\Phi(w).
-\tag{1}
+\qquad\text{(1)}
 $$
 
 The terms are, in order, variance risk, expected growth, income, trading cost,
@@ -235,7 +235,7 @@ $$
 &L_g\le\sum_{i\in g}w_i\le U_g, &&\text{group exposure bands},\\
 &\sum_i t_i\le T_{\max}, &&\text{turnover cap}.
 \end{aligned}
-\tag{2}
+\qquad\text{(2)}
 $$
 
 Here $\mathbf{1}$ is a vector of ones, so the first line states that weights
@@ -257,7 +257,7 @@ $$
 &\mathrm{CVaR}_{\alpha}(w)\le C_{\max} &&\text{tail-loss limit},\\
 &w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}.
 \end{aligned}
-\tag{3}
+\qquad\text{(3)}
 $$
 
 An implementation cap is a potentially tighter tradability limit derived from
@@ -272,7 +272,7 @@ $$
 &=\eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s,\\
 \xi_s&\ge \ell_s(w)-\eta,\qquad \xi_s\ge0.
 \end{aligned}
-\tag{4}
+\qquad\text{(4)}
 $$
 
 where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss above that
@@ -284,7 +284,7 @@ For large universes the covariance is represented as
 
 $$
 \Sigma=B\Omega B^\top+D.
-\tag{5}
+\qquad\text{(5)}
 $$
 
 where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings,
@@ -293,7 +293,7 @@ diagonal matrix of asset-specific variances. Portfolio variance becomes
 
 $$
 w^\top\Sigma w=(B^\top w)^\top\Omega(B^\top w)+\sum_i D_{ii}w_i^2.
-\tag{6}
+\qquad\text{(6)}
 $$
 
 Equation (6) can be evaluated without forming an $n\times n$ matrix. With a
@@ -363,7 +363,7 @@ A candidate bitstring $x\in\{0,1\}^F$ must satisfy
 
 $$
 \sum_{i\in W}x_i=r.
-\tag{7}
+\qquad\text{(7)}
 $$
 
 The window includes removable current holdings and attractive unheld assets,
@@ -380,7 +380,7 @@ Inside the same window, the support ranking is approximated by
 $$
 E(x)=x^TQx+h^Tx,
 \qquad x\in\{0,1\}^F,
-\tag{8}
+\qquad\text{(8)}
 $$
 
 where $Q$ contains pairwise risk interactions and $h$ contains linearized
@@ -393,7 +393,7 @@ The XY mixer is
 
 $$
 H_M=\frac{1}{2}\sum_{(i,j)\in E}(X_iX_j+Y_iY_j),
-\tag{9}
+\qquad\text{(9)}
 $$
 
 where $X_i,Y_i$ are Pauli operators on qubit $i$, and $E$ is a ring or
@@ -407,7 +407,7 @@ example, with seven required selections, the exact feasible subspace has
 
 $$
 \binom{16}{7}=11{,}440
-\tag{10}
+\qquad\text{(10)}
 $$
 
 states. A CPU subspace simulator tunes angles efficiently; Aer GPU executes
