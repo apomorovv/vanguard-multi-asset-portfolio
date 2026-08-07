@@ -1181,3 +1181,35 @@ as hardware and encodings improve.
     [doi:10.3389/fphy.2014.00005](https://doi.org/10.3389/fphy.2014.00005)
 22. Vanguard and WISER, “Quantum Challenge: Multi-Asset Portfolio Optimization,”
     challenge brief supplied with the project, 2026.
+    
+23. V. DeMiguel, L. Garlappi, and R. Uppal, “Optimal Versus Naive
+    Diversification: How Inefficient Is the 1/N Portfolio Strategy?”,
+    *The Review of Financial Studies*, 22(5), 1915–1953, 2009.
+    [doi:10.1093/rfs/hhm075](https://doi.org/10.1093/rfs/hhm075)
+
+24. O. Ledoit and M. Wolf, “Honey, I Shrunk the Sample Covariance Matrix,”
+    *The Journal of Portfolio Management*, 30(4), 110–119, 2004.
+    [doi:10.3905/jpm.2004.110](https://doi.org/10.3905/jpm.2004.110)
+
+25. F. Black and R. Litterman, “Global Portfolio Optimization,”
+    *Financial Analysts Journal*, 48(5), 28–43, 1992.
+    [doi:10.2469/faj.v48.n5.28](https://doi.org/10.2469/faj.v48.n5.28)
+
+26. R. Almgren and N. Chriss, “Optimal Execution of Portfolio
+    Transactions,” *The Journal of Risk*, 3(2), 5–39, 2001.
+    [doi:10.21314/JOR.2001.041](https://doi.org/10.21314/JOR.2001.041)
+
+27. S. Boyd, E. Busseti, S. Diamond, R. N. Kahn, K. Koh,
+    P. Nystrup, and J. Speth, “Multi-Period Trading via Convex
+    Optimization,” *Foundations and Trends in Optimization*,
+    3(1), 1–76, 2017.
+    [doi:10.1561/2400000023](https://doi.org/10.1561/2400000023)
+
+28. D. Goldfarb and G. Iyengar, “Robust Portfolio Selection Problems,”
+    *Mathematics of Operations Research*, 28(1), 1–38, 2003.
+    [doi:10.1287/moor.28.1.1.14260](https://doi.org/10.1287/moor.28.1.1.14260)
+
+29. Board of Governors of the Federal Reserve System,
+    Office of the Comptroller of the Currency, and Federal Deposit
+    Insurance Corporation, “Revised Guidance on Model Risk
+    Management,” Federal Reserve Supervisory Letter SR 26-2, 2026.
