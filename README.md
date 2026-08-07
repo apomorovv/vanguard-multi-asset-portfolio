@@ -11,8 +11,7 @@ The central design:
 > Classical optimization assigns percentages, enforces every financial
 > guardrail, and supplies the final answer and optimality evidence.
 
-The final study does not claim quantum advantage. It shows a production-safe
-solver today and a fair, auditable interface for quantum experiments.
+The final study shows a production-safe solver today and a fair, auditable interface for quantum experiments.
 
 ## Start here
 
