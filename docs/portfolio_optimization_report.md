@@ -901,7 +901,7 @@ assets; and hardware tests show that noisy quantum samples cannot bypass it.
 
 The architecture is also modular. A better classical heuristic, a future
 fault-tolerant algorithm, PCE, a Dicke-state ansatz, reverse annealing, or a
-learned candidate generator can replace the proposal engine without changing
+learned candidate generator can modify/replace the proposal engine without changing
 the allocation oracle or validator. This makes quantum experimentation useful
 without making portfolio safety depend on a quantum claim.
 
@@ -934,6 +934,137 @@ hardware noise can break it. Postselection reduces usable shots. The IBM
 campaign is one backend/calibration campaign, and its queue-inclusive wall time
 is not compared directly with local kernels. No result in this paper establishes
 quantum advantage.
+
+# 7.4 Future Directions and Path to Industrial Use
+
+The current project demonstrates that a hybrid portfolio optimizer can remain **constraint-safe even when the search method is heuristic or quantum**. Its strongest design choice is the separation between proposal and acceptance: search methods propose which assets to hold, while a classical allocation solver assigns the final weights and an independent validator checks every hard constraint.
+
+However, the system should still be viewed as a **research prototype rather than a live investment platform**. Future work should focus less on increasing the largest asset or qubit count and more on making the system reliable, realistic, and useful with real investment data.
+
+## Real-market validation
+
+The first priority is to test the optimizer on **real historical market data** using a walk-forward design. At each rebalance date, the model should only use information that would have been available at that time. The resulting portfolio can then be evaluated during the following period and re-optimized at the next rebalance.
+
+Future tests should include real or anonymized asset returns, factor exposures, expected-return forecasts, risk estimates, liquidity, transaction costs, current holdings, benchmark information, and stress scenarios. The optimizer should be compared with strong classical baselines and simple portfolios such as equal weighting.
+
+This is important because optimized mean-variance portfolios can perform poorly out of sample when expected returns and risk estimates are noisy [23]. The quality of the financial inputs can therefore matter as much as the optimization method itself.
+
+The evaluation should report realized return, volatility, drawdown, CVaR, turnover, transaction cost, tracking error, and portfolio stability.
+
+## Better financial models and more robust portfolios
+
+Expected returns, covariance estimates, factor exposures, and transaction costs are uncertain. Future versions should therefore improve both the input models and the optimizer's ability to handle estimation error.
+
+For example, Black-Litterman-style expected returns can combine market information with investor views [25], while covariance shrinkage can improve the stability of risk estimates [24]. Robust portfolio optimization can explicitly account for uncertainty in expected returns, factor exposures, risk estimates, and other parameters [28].
+
+Another important improvement is a more realistic transaction-cost and liquidity model. The current linear cost assumption is useful for a first implementation, but large trades can create nonlinear market impact. Future models could include bid-ask spreads, trading-volume limits, minimum trade sizes, and temporary or permanent price impact. The Almgren-Chriss framework provides a standard starting point for modeling execution cost and risk [26].
+
+The model could also move from a single rebalance to a **multi-period or receding-horizon problem**. This would allow the optimizer to consider future turnover, cash flows, liquidity, taxes, and execution decisions rather than treating each rebalance independently [27].
+
+## Improve large-scale solution quality
+
+The project shows that the factor-based architecture can produce valid portfolios for synthetic universes as large as **300,000 assets** without constructing a dense covariance matrix. This demonstrates strong engineering scalability, but it does not mean that the global optimum is known at that scale.
+
+In the largest runs, the continuous guide can reach its time limit and the algorithm continues using a valid fallback. Future research should therefore improve solution quality under fixed time budgets through:
+
+- warm starts from the previous portfolio;
+- safe asset screening;
+- better adaptive search windows;
+- parallel candidate evaluation;
+- decomposition of very large universes;
+- stronger lower bounds; and
+- anytime optimization that returns a valid portfolio quickly and improves it while more time remains.
+
+The existing sparse factor representation and OSQP-based formulation are well suited to repeated warm-started optimization [5].
+
+For an industrial system, an ideal workflow would be:
+
+> **valid portfolio quickly → improved portfolio after more search → best available portfolio at the time limit**
+
+rather than waiting for a single final solution.
+
+## Improve the quantum surrogate before increasing qubit count
+
+The quantum experiments reveal that the main limitation is not simply the number of qubits. The QUBO used by the quantum optimizer is only a surrogate for the real portfolio objective. The final value of a proposed support is known only after the continuous allocation problem is solved.
+
+The current results show relatively weak agreement between QUBO energy and the final allocated portfolio objective. Therefore, increasing QAOA depth or circuit width alone is unlikely to solve the main problem.
+
+A higher priority is to build a better approximation of the support value
+
+\[
+V(S)
+=
+\min_{w:\operatorname{supp}(w)\subseteq S} f(w),
+\]
+
+where \(S\) is a proposed set of assets and \(V(S)\) is the objective after continuous allocation.
+
+Future work could use allocation-solver gradients, dual variables, local second-order approximations, bilevel models, or learned ranking models to construct a more allocation-aware QUBO.
+
+Alternative encodings such as PCE may help represent more binary variables with limited hardware [18], while Dicke-state methods can enforce fixed-cardinality structure directly [12]. These approaches should be judged by whether they improve the **final allocated portfolio**, not only the internal quantum objective.
+
+Quantum computing should remain optional. The current IBM results do not show a consistent advantage over strong classical or random candidate generators, so classical LNS should remain the default fallback. Future quantum comparisons should match time budgets, candidate counts, allocation-oracle calls, and total end-to-end cost [19, 20].
+
+## Production software, monitoring, and explainability
+
+Industrial deployment would also require a production data and software layer around the optimizer.
+
+Instead of generating synthetic data inside the application, the system should receive validated market, portfolio, risk, and trading data from controlled sources. Each optimization run should record the input snapshot, model versions, constraints, solver settings, random seeds, fallbacks, validation results, and final approved portfolio.
+
+A production workflow could be:
+
+```text
+Market and portfolio data
+        ↓
+Data-quality checks
+        ↓
+Risk and return models
+        ↓
+Portfolio optimization
+        ↓
+Independent validation
+        ↓
+Portfolio-manager review
+        ↓
+Order generation and execution
+        ↓
+Post-trade monitoring
+```
+
+The system should also monitor runtime, memory, solver failures, fallback frequency, constraint violations, realized risk, transaction-cost error, portfolio turnover, and factor-exposure drift. Model-risk guidance emphasizes documentation, independent validation, governance, and continuous monitoring for models used in important decisions [29].
+
+Explainability should also be extended. Portfolio managers should be able to see why an asset entered or left the portfolio, which constraints are binding, how much expected return is sacrificed to reduce risk, and what would change if a limit were relaxed. Marginal risk contributions, shadow prices, transaction-cost contributions, and counterfactual re-optimization could make the recommendations easier to understand and approve.
+
+## Recommended deployment path
+
+A practical path from the current prototype to industrial use is:
+
+1. **Historical validation:** run walk-forward backtests on real point-in-time data.
+2. **Shadow mode:** generate recommendations using live data without sending trades.
+3. **Controlled pilot:** use the optimizer on a limited portfolio with human approval.
+4. **Production deployment:** integrate the system with governed data, monitoring, audit trails, and classical fallback mechanisms.
+
+The main future research goal is therefore not simply to make the optimizer larger. It is to make it **better informed, more robust, easier to explain, and safer to operate with real investment data**.
+
+The strongest long-term architecture would combine
+
+\[
+\boxed{
+\text{real data}
++
+\text{robust forecasts}
++
+\text{realistic trading costs}
++
+\text{multi-period decisions}
++
+\text{scalable optimization}
++
+\text{independent validation}
+}
+\]
+
+while keeping quantum computing as a replaceable candidate-generation component. This makes the system useful with today's classical methods while preserving a clear path for future quantum improvements.
 
 ## 8. Reproducibility, tools, and contributions
 
