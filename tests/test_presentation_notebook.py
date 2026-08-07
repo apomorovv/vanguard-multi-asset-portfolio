@@ -95,6 +95,7 @@ def test_notebook_uses_safe_defaults_and_resumable_qpu_jobs() -> None:
         "QPU_STRESS_ENABLE_FRACTIONAL_GATES": False,
         "RUN_SCALING_STRETCH": False,
         "RUN_SCENARIO_PENALTY_SWEEP": True,
+        "RUN_CANONICAL_PREFERENCE_SENSITIVITY": True,
         "QP_TOLERANCE": 1.0e-9,
         "ALLOW_GUIDE_FALLBACK": True,
     }
@@ -222,5 +223,77 @@ def test_scenario_penalty_experiment_is_controlled_and_validated() -> None:
         "scenario_penalty_constraint_checks.csv",
         "scenario_penalty_frontier.{suffix}",
         "scenario_penalty_allocation_shift.{suffix}",
+    ):
+        assert artifact in code
+
+
+def test_canonical_preference_sensitivity_uses_the_actual_model_api() -> None:
+    notebook = _load_notebook()
+    scenario_index = _heading_index(
+        notebook,
+        "## 6A. Experiment D - scenario-based CVaR penalty frontier",
+    )
+    preference_index = _heading_index(
+        notebook,
+        "## 6B. Experiment E - canonical objective-coefficient sensitivity",
+    )
+    ablation_index = _heading_index(
+        notebook,
+        "### Optional constraint ablation (off by default)",
+    )
+    assert scenario_index < preference_index < ablation_index
+
+    markdown = _cell_source(notebook["cells"][preference_index])
+    code = next(
+        _cell_source(cell)
+        for cell in notebook["cells"][preference_index + 1 :]
+        if cell.get("cell_type") == "code"
+    )
+    assignments = _literal_assignments(notebook)
+
+    assert assignments["CANONICAL_RISK_WEIGHTS"] == [
+        (0.5, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 25.0)
+    ]
+    assert assignments["CANONICAL_INCOME_WEIGHTS"] == [
+        (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
+    ]
+    assert assignments["CANONICAL_COST_WEIGHTS"] == [
+        (0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0)
+    ]
+    assert assignments["CANONICAL_PREFERENCE_REPETITIONS"] == [5]
+    assert assignments["CANONICAL_PREFERENCE_TEST_SCENARIOS"] == [20_000]
+    assert assignments["CANONICAL_PREFERENCE_ALPHA"] == [0.95]
+
+    assert "unchanged canonical objective" in markdown
+    assert "Preferences" in markdown
+    assert "AllocationOracle" in markdown
+    assert "Markowitz (1952)" in markdown
+    assert "Ehrgott, Klamroth, and Schwehm (2004)" in markdown
+    assert "Lobo, Fazel, and Boyd (2007)" in markdown
+    assert "not universal market constants" in markdown
+    assert "objectives express different utilities" in markdown
+
+    assert "from vanguard_portfolio.classical import PRESETS" in code
+    assert "preferences=Preferences(**values)" in code
+    assert "oracle = AllocationOracle(" in code
+    assert "validate_weights(weights, problem, constraints=constraints)" in code
+    assert "canonical_objective_breakdown" in code
+    assert '"actual_model_api": True' in code
+    assert '"gurobi_used": False' in code
+    assert '"qpu_jobs_submitted": 0' in code
+    assert '"osqp" if importlib.util.find_spec("osqp") is not None else "scipy"' in code
+    assert "run_hybrid_optimizer(" not in code
+    assert "RUN_IBM_QPU" not in code
+
+    for artifact in (
+        "canonical_preference_sensitivity_runs.csv",
+        "canonical_preference_sensitivity_summary.csv",
+        "canonical_preference_profiles.csv",
+        "canonical_preference_profile_summary.csv",
+        "canonical_preference_constraint_checks.csv",
+        "canonical_preference_risk_knees.csv",
+        "canonical_preference_config.json",
+        "canonical_preference_sensitivity.{suffix}",
+        "canonical_preference_profiles.{suffix}",
     ):
         assert artifact in code
