@@ -119,7 +119,7 @@ The model can enforce:
 
 Large instances use $\Sigma=B\Omega B^T+D$, a factor representation. This
 evaluates portfolio risk from common-factor loadings and asset-specific
-variance without materializing a dense \(n\times n\) covariance matrix.
+variance without materializing a dense $n \times n$ covariance matrix.
 
 ## Installation
 
