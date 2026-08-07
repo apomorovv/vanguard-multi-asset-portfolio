@@ -935,13 +935,13 @@ campaign is one backend/calibration campaign, and its queue-inclusive wall time
 is not compared directly with local kernels. No result in this paper establishes
 quantum advantage.
 
-# 7.4 Future Directions and Path to Industrial Use
+### 7.4 Future Directions and Path to Industrial Use
 
 The current project demonstrates that a hybrid portfolio optimizer can remain **constraint-safe even when the search method is heuristic or quantum**. Its strongest design choice is the separation between proposal and acceptance: search methods propose which assets to hold, while a classical allocation solver assigns the final weights and an independent validator checks every hard constraint.
 
 However, the system should still be viewed as a **research prototype rather than a live investment platform**. Future work should focus less on increasing the largest asset or qubit count and more on making the system reliable, realistic, and useful with real investment data.
 
-## Real-market validation
+#### Real-market validation
 
 The first priority is to test the optimizer on **real historical market data** using a walk-forward design. At each rebalance date, the model should only use information that would have been available at that time. The resulting portfolio can then be evaluated during the following period and re-optimized at the next rebalance.
 
@@ -951,7 +951,7 @@ This is important because optimized mean-variance portfolios can perform poorly 
 
 The evaluation should report realized return, volatility, drawdown, CVaR, turnover, transaction cost, tracking error, and portfolio stability.
 
-## Better financial models and more robust portfolios
+#### Better financial models and more robust portfolios
 
 Expected returns, covariance estimates, factor exposures, and transaction costs are uncertain. Future versions should therefore improve both the input models and the optimizer's ability to handle estimation error.
 
@@ -961,7 +961,7 @@ Another important improvement is a more realistic transaction-cost and liquidity
 
 The model could also move from a single rebalance to a **multi-period or receding-horizon problem**. This would allow the optimizer to consider future turnover, cash flows, liquidity, taxes, and execution decisions rather than treating each rebalance independently [27].
 
-## Improve large-scale solution quality
+#### Improve large-scale solution quality
 
 The project shows that the factor-based architecture can produce valid portfolios for synthetic universes as large as **300,000 assets** without constructing a dense covariance matrix. This demonstrates strong engineering scalability, but it does not mean that the global optimum is known at that scale.
 
@@ -983,19 +983,13 @@ For an industrial system, an ideal workflow would be:
 
 rather than waiting for a single final solution.
 
-## Improve the quantum surrogate before increasing qubit count
+#### Improve the quantum surrogate before increasing qubit count
 
 The quantum experiments reveal that the main limitation is not simply the number of qubits. The QUBO used by the quantum optimizer is only a surrogate for the real portfolio objective. The final value of a proposed support is known only after the continuous allocation problem is solved.
 
 The current results show relatively weak agreement between QUBO energy and the final allocated portfolio objective. Therefore, increasing QAOA depth or circuit width alone is unlikely to solve the main problem.
 
-A higher priority is to build a better approximation of the support value
-
-\[
-V(S)
-=
-\min_{w:\operatorname{supp}(w)\subseteq S} f(w),
-\]
+A higher priority is to build a better approximation of the support value V(S) = $$ \min_{w:\operatorname{supp}(w)\subseteq S} f(w) $$
 
 where \(S\) is a proposed set of assets and \(V(S)\) is the objective after continuous allocation.
 
@@ -1005,7 +999,7 @@ Alternative encodings such as PCE may help represent more binary variables with 
 
 Quantum computing should remain optional. The current IBM results do not show a consistent advantage over strong classical or random candidate generators, so classical LNS should remain the default fallback. Future quantum comparisons should match time budgets, candidate counts, allocation-oracle calls, and total end-to-end cost [19, 20].
 
-## Production software, monitoring, and explainability
+#### Production software, monitoring, and explainability
 
 Industrial deployment would also require a production data and software layer around the optimizer.
 
@@ -1035,7 +1029,7 @@ The system should also monitor runtime, memory, solver failures, fallback freque
 
 Explainability should also be extended. Portfolio managers should be able to see why an asset entered or left the portfolio, which constraints are binding, how much expected return is sacrificed to reduce risk, and what would change if a limit were relaxed. Marginal risk contributions, shadow prices, transaction-cost contributions, and counterfactual re-optimization could make the recommendations easier to understand and approve.
 
-## Recommended deployment path
+#### Recommended deployment path
 
 A practical path from the current prototype to industrial use is:
 
@@ -1048,7 +1042,6 @@ The main future research goal is therefore not simply to make the optimizer larg
 
 The strongest long-term architecture would combine
 
-\[
 \boxed{
 \text{real data}
 +
@@ -1062,7 +1055,7 @@ The strongest long-term architecture would combine
 +
 \text{independent validation}
 }
-\]
+
 
 while keeping quantum computing as a replaceable candidate-generation component. This makes the system useful with today's classical methods while preserving a clear path for future quantum improvements.
 
