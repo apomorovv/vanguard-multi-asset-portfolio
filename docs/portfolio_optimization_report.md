@@ -845,6 +845,42 @@ converted every reported observation into a valid portfolio. The experiment
 does **not** demonstrate a speed, quality, or scaling advantage over the best
 classical candidate generator.
 
+### 5.9 Constraint sweep robustness
+
+The pipeline was also stressed by sweeping two hard constraints directly:
+the L1 turnover cap and the exact cardinality target, each with three
+repeated observations per level. This tests whether every method reliably
+returns a result as the feasible region shrinks, not just whether the
+returned result is good.
+
+Classical tabu/LNS completes all window iterations at every tested level.
+XY-QAOA on `ibm_kingston` does not: it silently fails to produce a result
+in 3 of 3 attempts at the tightest turnover cap (0.1) and in 2 of 3 attempts
+at the tightest cardinality level (40 of the universe). Coverage recovers to
+3/3 once the turnover cap reaches 0.2 or the cardinality target reaches 50.
+This is a failure mode distinct from an infeasible or low-quality proposal —
+the method returns nothing at all, and the calling pipeline must treat that
+as a proposal failure rather than a silent gap in the record.
+
+![Method coverage across the constraint sweep](../results/final_submission/figures/sweep_coverage.png)
+
+Where XY-QAOA does return a result, it tracks continuous relaxation and
+classical tabu/LNS closely on both sweeps, and briefly outperforms LNS at
+cardinality 50. The valid-initial portfolio is consistently the weakest
+objective across both sweeps, confirming that the search step earns its
+place even under tightened constraints.
+
+![Solution quality across the constraint sweep](../results/final_submission/figures/sweep_objective.png)
+
+Runtime tells a separate story. Classical tabu/LNS and continuous relaxation
+stay within roughly 0.3-1.8 seconds across both sweeps. XY-QAOA on real
+hardware costs 15-40 seconds regardless of constraint level, reflecting
+queue and shot overhead rather than sensitivity to the constraint itself.
+The valid-initial portfolio is fastest by construction, since it requires
+no search.
+
+![Runtime across the constraint sweep](../results/final_submission/figures/sweep_runtime.png)
+
 ## 6. Output and explainability
 
 ### 6.1 Portfolio output
