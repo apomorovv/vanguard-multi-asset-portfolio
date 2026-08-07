@@ -308,7 +308,7 @@ The solver follows seven stages.
 
 1. **Continuous guide.** Remove exact cardinality and minimum-active-weight
    rules, then solve the remaining convex factor QP over the full universe.
-2. **Valid exact-$K$ initialization.** Construct a support containing the
+2. **Valid exact - $K$ initialization.** Construct a support containing the
    mandatory assets and sufficient representation for positive group floors;
    solve its allocation and, if needed, invoke a feasibility MILP.
 3. **Adaptive window.** Select weak held assets and promising unheld assets to
