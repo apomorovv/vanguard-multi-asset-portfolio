@@ -82,8 +82,6 @@ Definitions:
   removing exact-cardinality and minimum-active-weight requirements.
 - **Change window:** a small subset of held and unheld assets considered for a
   local support update.
-- **Allocation oracle:** the continuous optimizer that assigns exact weights to
-  a proposed support and rejects infeasible supports.
 - **QUBO:** a quadratic unconstrained binary optimization surrogate used to rank
   window bitstrings.
 - **Incumbent:** the best feasible solution currently known to a mixed-integer
