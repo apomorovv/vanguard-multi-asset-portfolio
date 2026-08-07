@@ -1,10 +1,11 @@
----
-title: "Constraint-Safe Quantum-Guided Large-Neighborhood Search for Sparse Multi-Asset Portfolios"
-subtitle: "Final technical report and WISER Quantum Challenge evidence paper"
-date: "August 2026"
+# Constraint-Safe Quantum-Guided Large-Neighborhood Search for Sparse Multi-Asset Portfolios
+
+**Final technical report and WISER Quantum Challenge evidence paper**  
+**August 2026**
+
 ---
 
-# Abstract
+## Abstract
 
 Real portfolio construction is not only a search for an attractive risk-return
 trade-off. It must also respect a budget, hold an exact or limited number of
@@ -22,11 +23,11 @@ validator, which recomputes every hard constraint. Exact mixed-integer
 optimization supplies global certificates where tractable.
 
 The strongest correctness results are exact: four continuous solvers agree to
-an objective spread of \(1.41\times10^{-9}\); tiny exhaustive enumeration and
+an objective spread of $1.41\times10^{-9}$; tiny exhaustive enumeration and
 Gurobi return the same sparse optimum; the 100-asset case is solved to a 0.0%
 reported mixed-integer gap; and a separate 60-asset gauntlet passes 244 checks
 across 17 constraint families at a globally optimal objective of
-\(-0.0320099372\). The broader study remains feasible as the workload grows. A
+$-0.0320099372$. The broader study remains feasible as the workload grows. A
 250-asset, 10,000-scenario case passes 858 independent checks. All 21 repeated
 full-hybrid runs from 250 to 20,000 assets and all 27 stretch runs from 1,000 to
 300,000 assets return valid portfolios with zero reported hard-constraint
@@ -51,16 +52,16 @@ without being allowed to violate portfolio rules or assign the final capital.
 quadratic programming; large-neighborhood search; factor model; conditional
 value at risk; QAOA; XY mixer; quantum hardware; independent validation.
 
-# 1. Introduction
+## 1. Introduction
 
-## 1.1 Problem and challenge objective
+### 1.1 Problem and challenge objective
 
 Portfolio optimization decides how much capital to place in each available
 asset. In the classical mean-variance model of Markowitz [1], expected return
 is the reward and covariance—the tendency of asset returns to move together—is
 the source of portfolio variance, a common risk measure. A practical portfolio,
 however, is constrained by implementation and policy. It may need exactly
-\(K\) active holdings; lower and upper position limits; eligibility and
+$K$ active holdings; lower and upper position limits; eligibility and
 mandatory-holding rules; asset-class or sector bands; a turnover budget;
 minimum expected return and income; factor-exposure bands; scenario loss
 floors; and a conditional value-at-risk (CVaR) limit. CVaR is the average loss
@@ -84,7 +85,7 @@ This work addresses that goal with one central design rule:
 This rule turns hardware noise, imperfect surrogates, and heuristic search into
 recoverable proposal failures rather than financial-rule failures.
 
-## 1.2 Literature overview
+### 1.2 Literature overview
 
 Markowitz's mean-variance framework established the quadratic relationship
 between portfolio weights and covariance [1]. Adding a binary variable for
@@ -113,7 +114,7 @@ exchanges the bit patterns `10` and `01` and therefore preserves Hamming weight,
 the number of selected binary variables [8]. Hodson et al. applied hard
 constraint mixers to an eight-stock, discrete-lot portfolio-rebalancing
 example [9]. These ideas are directly relevant to exact-cardinality support
-selection: a window that must keep \(r\) assets can begin with \(r\) one-bits
+selection: a window that must keep $r$ assets can begin with $r$ one-bits
 and, ideally, never leave that subspace.
 
 The project also investigated several neighboring quantum formulations.
@@ -154,7 +155,7 @@ sampling, and IBM QPU observations as separate evidence tiers. It also includes
 matched candidate budgets and random baselines, because a quantum method is not
 demonstrably useful merely because it produces a valid bitstring.
 
-## 1.3 Contributions
+### 1.3 Contributions
 
 The project makes six contributions.
 
@@ -178,57 +179,57 @@ The project makes six contributions.
    advantage over matched random sampling—alongside the successful feasibility
    results.
 
-# 2. Mathematical formulation
+## 2. Mathematical formulation
 
-## 2.1 Data and variables
+### 2.1 Data and variables
 
-Let \(n\) be the number of candidate assets. The model uses the following
+Let $n$ be the number of candidate assets. The model uses the following
 inputs:
 
-- \(\mu_i\): estimated expected return of asset \(i\);
-- \(y_i\): income yield, such as a dividend or coupon yield;
-- \(c_i\): linear cost per unit of turnover;
-- \(w_i^0\): current portfolio weight;
-- \(\Sigma\): return covariance matrix;
-- \(m_i,u_i\): minimum and maximum weight when asset \(i\) is selected;
-- \(K\): required number of selected assets;
-- \(B\): asset-by-factor loading matrix; and
-- \(R_{si}\): return of asset \(i\) in scenario \(s\).
+- $\mu_i$: estimated expected return of asset $i$;
+- $y_i$: income yield, such as a dividend or coupon yield;
+- $c_i$: linear cost per unit of turnover;
+- $w_i^0$: current portfolio weight;
+- $\Sigma$: return covariance matrix;
+- $m_i,u_i$: minimum and maximum weight when asset $i$ is selected;
+- $K$: required number of selected assets;
+- $B$: asset-by-factor loading matrix; and
+- $R_{si}$: return of asset $i$ in scenario $s$.
 
 A **weight** is a fraction of total capital. The decision variable
-\(w_i\in\mathbb{R}\) is the new weight of asset \(i\). The binary variable
-\(z_i\in\{0,1\}\) equals one if the asset is selected. The auxiliary variable
-\(t_i\ge0\) represents absolute turnover and satisfies
-\(t_i\ge w_i-w_i^0\) and \(t_i\ge w_i^0-w_i\). The **support** of a portfolio
-is the set \(S=\{i:w_i>0\}\); its size is the portfolio's **cardinality**.
+$w_i\in\mathbb{R}$ is the new weight of asset $i$. The binary variable
+$z_i\in\{0,1\}$ equals one if the asset is selected. The auxiliary variable
+$t_i\ge0$ represents absolute turnover and satisfies
+$t_i\ge w_i-w_i^0$ and $t_i\ge w_i^0-w_i$. The **support** of a portfolio
+is the set $S=\{i:w_i>0\}$; its size is the portfolio's **cardinality**.
 
-## 2.2 Objective
+### 2.2 Objective
 
 The canonical model minimizes
 
-\[
+$$
 \lambda_r w^T\Sigma w
 -\lambda_g\mu^T w
 -\lambda_y y^T w
 +\lambda_c c^Tt
 +\lambda_s\Phi(w).
 \tag{1}
-\]
+$$
 
 The terms are, in order, variance risk, expected growth, income, trading cost,
-and an optional scenario penalty \(\Phi\). The nonnegative coefficients
-\(\lambda_r,\lambda_g,\lambda_y,\lambda_c,\lambda_s\) express investor
+and an optional scenario penalty $\Phi$. The nonnegative coefficients
+$\lambda_r,\lambda_g,\lambda_y,\lambda_c,\lambda_s$ express investor
 preferences. Risk and costs have positive signs because they are minimized;
 return and income have negative signs because larger values should improve a
 minimization objective. **Lower objective values are better, but the objective
 is a composite ranking score—not a percentage return.** Results therefore
 report return, volatility, income, turnover, tail loss, and breaches separately.
 
-## 2.3 Hard guardrails
+### 2.3 Hard guardrails
 
 The core constraints are
 
-\[
+$$
 \begin{aligned}
 &\mathbf{1}^T w = 1, &&\text{full investment},\\
 &w_i\ge0, &&\text{long-only positions},\\
@@ -238,17 +239,17 @@ The core constraints are
 &\sum_i t_i\le T_{\max}, &&\text{turnover cap}.
 \end{aligned}
 \tag{2}
-\]
+$$
 
-Here \(\mathbf{1}\) is a vector of ones, so the first line states that weights
-sum to 100%. A group \(g\) may be an asset class, region, sector, or any policy
-bucket, and \(L_g,U_g\) are its minimum and maximum allocation. The turnover
-definition is the two-way \(L_1\) change; a 40% \(L_1\) cap corresponds to 20%
+Here $\mathbf{1}$ is a vector of ones, so the first line states that weights
+sum to 100%. A group $g$ may be an asset class, region, sector, or any policy
+bucket, and $L_g,U_g$ are its minimum and maximum allocation. The turnover
+definition is the two-way $L_1$ change; a 40% $L_1$ cap corresponds to 20%
 one-way buys in a fully invested rebalance.
 
 When enabled, the model also enforces
 
-\[
+$$
 \begin{aligned}
 &z_i=0 &&\text{for ineligible assets},\\
 &z_i=1 &&\text{for mandatory assets},\\
@@ -260,57 +261,57 @@ When enabled, the model also enforces
 &w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}.
 \end{aligned}
 \tag{3}
-\]
+$$
 
 An implementation cap is a potentially tighter tradability limit derived from
-liquidity or operational rules. Factor exposure \(B^Tw\) measures the
+liquidity or operational rules. Factor exposure $B^Tw$ measures the
 portfolio's sensitivity to common drivers. A stress floor limits loss under a
-named scenario. For scenario losses \(\ell_s(w)=-R_s^Tw\), empirical CVaR at
-confidence \(\alpha\) is represented by
+named scenario. For scenario losses $\ell_s(w)=-R_s^Tw$, empirical CVaR at
+confidence $\alpha$ is represented by
 
-\[
+$$
 \operatorname{CVaR}_{\alpha}(w)=
 \eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s,
 \quad
 \xi_s\ge \ell_s(w)-\eta,
 \quad \xi_s\ge0,
 \tag{4}
-\]
+$$
 
-where \(\eta\) is a loss threshold and \(\xi_s\) is scenario \(s\)'s loss
+where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss
 above that threshold [2].
 
-## 2.4 Factor-native risk
+### 2.4 Factor-native risk
 
 For large universes the covariance is represented as
 
-\[
+$$
 \Sigma=B\Omega B^T+D,
 \tag{5}
-\]
+$$
 
-where \(B\in\mathbb{R}^{n\times k}\) holds \(k\) factor loadings,
-\(\Omega\in\mathbb{R}^{k\times k}\) is the factor covariance, and \(D\) is a
+where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings,
+$\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance, and $D$ is a
 diagonal matrix of asset-specific variances. Portfolio variance becomes
 
-\[
+$$
 w^T\Sigma w=(B^Tw)^T\Omega(B^Tw)+\sum_i D_{ii}w_i^2.
 \tag{6}
-\]
+$$
 
-Equation (6) can be evaluated without forming an \(n\times n\) matrix. With a
-fixed factor count, the dominant stored arrays grow linearly with \(n\), while
+Equation (6) can be evaluated without forming an $n\times n$ matrix. With a
+fixed factor count, the dominant stored arrays grow linearly with $n$, while
 a dense covariance grows quadratically.
 
-# 3. Algorithm
+## 3. Algorithm
 
-## 3.1 End-to-end pipeline
+### 3.1 End-to-end pipeline
 
 The solver follows seven stages.
 
 1. **Continuous guide.** Remove exact cardinality and minimum-active-weight
    rules, then solve the remaining convex factor QP over the full universe.
-2. **Valid exact-\(K\) initialization.** Construct a support containing the
+2. **Valid exact-$K$ initialization.** Construct a support containing the
    mandatory assets and sufficient representation for positive group floors;
    solve its allocation and, if needed, invoke a feasibility MILP.
 3. **Adaptive window.** Select weak held assets and promising unheld assets to
@@ -328,12 +329,12 @@ The first valid portfolio is retained throughout the search. A failed guide,
 infeasible proposal, incorrect hardware cardinality, solver timeout, or worse
 candidate therefore cannot erase feasibility.
 
-## 3.2 Continuous guide and initialization
+### 3.2 Continuous guide and initialization
 
 The continuous guide supplies two things: a lower bound when it is solved to
 the required status, and a ranking signal for promising assets. It does not
-solve the sparse problem because it may use more than \(K\) nonzero weights.
-A deterministic initialization then assembles an exact-\(K\) support and calls
+solve the sparse problem because it may use more than $K$ nonzero weights.
+A deterministic initialization then assembles an exact-$K$ support and calls
 the allocation oracle. Mandatory holdings are protected, group floors are
 covered, and ranked alternatives are tried before a feasibility MILP is used.
 The search begins only after this portfolio passes independent validation.
@@ -343,10 +344,10 @@ the current portfolio is already feasible, the search may continue, but the
 unsolved guide is not reported as an optimality bound. This distinction is
 especially important above 20,000 assets in the stretch experiment.
 
-## 3.3 Fixed-support allocation oracle
+### 3.3 Fixed-support allocation oracle
 
-For a proposed support \(S\), the oracle imposes \(w_i=0\) for every
-\(i\notin S\) and solves the resulting convex QP. Because the binary choice is
+For a proposed support $S$, the oracle imposes $w_i=0$ for every
+$i\notin S$ and solves the resulting convex QP. Because the binary choice is
 fixed, the oracle can assign continuous percentages while enforcing every
 linear and convex constraint. Its result is cached by support to avoid
 re-solving duplicate classical and quantum candidates.
@@ -357,60 +358,60 @@ oracle access. The model never repairs a solution by clipping a negative
 weight or renormalizing after the solve, because such post-processing could
 silently violate a bound.
 
-## 3.4 Classical large-neighborhood search
+### 3.4 Classical large-neighborhood search
 
 Large-neighborhood search changes several discrete decisions while freezing
-the rest. In a window \(W\) of \(F\) assets, suppose \(r\) are currently held.
-A candidate bitstring \(x\in\{0,1\}^F\) must satisfy
+the rest. In a window $W$ of $F$ assets, suppose $r$ are currently held.
+A candidate bitstring $x\in\{0,1\}^F$ must satisfy
 
-\[
+$$
 \sum_{i\in W}x_i=r.
 \tag{7}
-\]
+$$
 
 The window includes removable current holdings and attractive unheld assets,
 using guide weights, marginal risk, group pressure, and correlation-community
-coverage. Exact enumeration is possible for small \(\binom{F}{r}\). At larger
+coverage. Exact enumeration is possible for small $\binom{F}{r}$. At larger
 sizes a tabu mechanism temporarily forbids recently reversed swaps, encouraging
 the search to explore new supports. Only distinct, high-ranking proposals are
 sent to the more expensive allocation oracle.
 
-## 3.5 QUBO surrogate and XY-QAOA
+### 3.5 QUBO surrogate and XY-QAOA
 
 Inside the same window, the support ranking is approximated by
 
-\[
+$$
 E(x)=x^TQx+h^Tx,
 \qquad x\in\{0,1\}^F,
 \tag{8}
-\]
+$$
 
-where \(Q\) contains pairwise risk interactions and \(h\) contains linearized
+where $Q$ contains pairwise risk interactions and $h$ contains linearized
 return, income, trading cost, frozen-portfolio covariance, and group-pressure
 effects. A QUBO is “unconstrained” in its algebraic form, but this implementation
 uses a mixer that restricts evolution to the fixed-weight subspace in (7). The
-standard binary-to-Ising substitution maps (8) to Pauli \(Z\) operators [21].
+standard binary-to-Ising substitution maps (8) to Pauli $Z$ operators [21].
 
 The XY mixer is
 
-\[
+$$
 H_M=\frac{1}{2}\sum_{(i,j)\in E}(X_iX_j+Y_iY_j),
 \tag{9}
-\]
+$$
 
-where \(X_i,Y_i\) are Pauli operators on qubit \(i\), and \(E\) is a ring or
+where $X_i,Y_i$ are Pauli operators on qubit $i$, and $E$ is a ring or
 hardware-aware edge set. Each term exchanges one selected and one unselected
 bit. Starting from the current window support therefore preserves exactly
-\(r\) selections in ideal execution. At QAOA depth \(p\), cost and mixer
-evolutions are alternated \(p\) times and their angles are tuned classically.
+$r$ selections in ideal execution. At QAOA depth $p$, cost and mixer
+evolutions are alternated $p$ times and their angles are tuned classically.
 
-The default window uses \(F=16\) rather than one qubit per global asset. For
+The default window uses $F=16$ rather than one qubit per global asset. For
 example, with seven required selections, the exact feasible subspace has
 
-\[
+$$
 \binom{16}{7}=11{,}440
 \tag{10}
-\]
+$$
 
 states. A CPU subspace simulator tunes angles efficiently; Aer GPU executes
 the corresponding physical circuit and verifies the actual device. IBM
@@ -418,7 +419,7 @@ Runtime samples selected hardware cases. Hardware bitstrings with the wrong
 Hamming weight are recorded rather than disguised. Valid distinct bitstrings
 are passed to the same allocation oracle as classical proposals.
 
-## 3.6 Certification and claim tiers
+### 3.6 Certification and claim tiers
 
 Gurobi's branch-and-bound MIQP reports an incumbent, a best bound, and a mixed-
 integer programming gap. A 0.0% reported gap means that the incumbent and bound
@@ -436,9 +437,9 @@ This paper uses four evidence labels:
 - **Hardware observation:** measured circuit and post-allocation behavior on a
   named QPU; not evidence of asymptotic quantum advantage.
 
-# 4. Experimental design
+## 4. Experimental design
 
-## 4.1 Data, privacy, and reproducibility
+### 4.1 Data, privacy, and reproducibility
 
 All portfolio instances and out-of-sample paths in the submitted benchmark
 packages are synthetic or anonymized. No client holdings, account identifiers,
@@ -457,15 +458,15 @@ environment inventories remain represented by archive checksums rather than
 duplicated in Git. The resolved numerical and solver settings are published;
 one absolute output path is normalized to its repository-relative equivalent.
 
-## 4.2 Experimental cases
+### 4.2 Experimental cases
 
 | Case | Purpose | Scale | Evidence tier |
 |---|---|---:|---|
 | Continuous cross-check | Verify the convex implementation across backends | 4 solvers | Exact numerical agreement |
-| Tiny sparse case | Compare enumeration, QAOA, and Gurobi | \(K=4\) | Exact/certified |
-| Main sparse case | Compare initialization, LNS, two QAOA forms, and Gurobi | 100 assets, \(K=20\) | Exact/certified |
-| Full-constraint gauntlet | Exercise every guardrail family | 60 assets, \(K=12\) | Exact/certified |
-| Scenario-rich gauntlet | Combine all guardrails with empirical CVaR | 250 assets, 10,000 scenarios, \(K=25\) | Heuristic sparse result |
+| Tiny sparse case | Compare enumeration, QAOA, and Gurobi | $K=4$ | Exact/certified |
+| Main sparse case | Compare initialization, LNS, two QAOA forms, and Gurobi | 100 assets, $K=20$ | Exact/certified |
+| Full-constraint gauntlet | Exercise every guardrail family | 60 assets, $K=12$ | Exact/certified |
+| Scenario-rich gauntlet | Combine all guardrails with empirical CVaR | 250 assets, 10,000 scenarios, $K=25$ | Heuristic sparse result |
 | Scenario count scaling | Measure the CVaR continuous solve | 500-100,000 scenarios | Continuous-solver benchmark |
 | Preference and tail sweeps | Show controllable investor trade-offs | 30 tail runs plus repeated profiles | Repeated heuristic/continuous |
 | Full hybrid scaling | Repeated end-to-end hybrid protocol | 250-20,000 assets, 21 runs | Bounded where guide solved |
@@ -475,7 +476,7 @@ one absolute output path is normalized to its repository-relative equivalent.
 | IBM campaign | Audit cardinality survival and proposal quality | 8-28 qubits, 30 observations | Hardware observation |
 | Equal-lot classical baseline | Compare QP, MIQP, SCIP, annealing | 250 assets, 1,000 units | Exact/near-exact classical |
 
-## 4.3 Metrics
+### 4.3 Metrics
 
 Every accepted portfolio reports:
 
@@ -494,12 +495,12 @@ Synthetic backtests use 30 generated paths in the main robustness experiment.
 They test whether risk behavior is coherent under held-out draws; they are not
 forecasts, live track records, or financial advice.
 
-# 5. Results
+## 5. Results
 
-## 5.1 Continuous and discrete correctness
+### 5.1 Continuous and discrete correctness
 
 SciPy SLSQP, OSQP, Clarabel, and Gurobi all solve the same continuous case with
-zero breaches. Their objective spread is only \(1.4063\times10^{-9}\).
+zero breaches. Their objective spread is only $1.4063\times10^{-9}$.
 
 | Backend | Objective | Runtime (s) | Breaches |
 |---|---:|---:|---:|
@@ -509,27 +510,27 @@ zero breaches. Their objective spread is only \(1.4063\times10^{-9}\).
 | SciPy SLSQP | -0.049140752606 | 1.4517 | 0 |
 
 In the tiny sparse case, exhaustive enumeration and Gurobi return the same
-objective, \(-0.03681145\), at \(K=4\); Gurobi reports a 0.0% gap. The penalty-
+objective, $-0.03681145$, at $K=4$; Gurobi reports a 0.0% gap. The penalty-
 QAOA proposal reaches the same support-level result after allocation. The
 continuous relaxation attains a lower objective because it is not restricted
 to the same sparse feasible set and must not be called the sparse winner.
 
 The independent 250-asset equal-lot benchmark supplies a second classical
 check. Clarabel, OSQP, and Gurobi agree on a continuous objective near
-\(-0.09852504\). Gurobi's 1,000-unit MIQP reaches \(-0.09852495\) in 0.0557
+$-0.09852504$. Gurobi's 1,000-unit MIQP reaches $-0.09852495$ in 0.0557
 seconds; SCIP reaches a very similar solution in 0.6986 seconds; and swap
-annealing is within \(2.92\times10^{-6}\) relative gap in about 3.99 seconds.
+annealing is within $2.92\times10^{-6}$ relative gap in about 3.99 seconds.
 All are feasible. This result establishes a strong classical baseline and
 shows that the project did not adopt a quantum method before validating the
 classical model.
 
-## 5.2 Main 100-asset result
+### 5.2 Main 100-asset result
 
 The main case requires exactly 20 holdings. Gurobi certifies the global sparse
-objective \(-0.0384147146\) with a 0.0% reported gap and zero breaches. The
-valid initial portfolio scores \(-0.0346876359\). Classical LNS, XY-QAOA on
+objective $-0.0384147146$ with a 0.0% reported gap and zero breaches. The
+valid initial portfolio scores $-0.0346876359$. Classical LNS, XY-QAOA on
 Aer GPU, and penalty QAOA all eventually reach the same best heuristic support,
-with allocated objective \(-0.0380448157\). That support closes 90.08% of the
+with allocated objective $-0.0380448157$. That support closes 90.08% of the
 initial-to-certified objective difference.
 
 | Method | Final objective | Status | Breaches |
@@ -555,39 +556,39 @@ its median terminal wealth is 1.7692 and return-to-volatility ratio is 0.7106.
 This is a useful warning against equating one estimated objective with certain
 future performance.
 
-## 5.3 All-constraint certification
+### 5.3 All-constraint certification
 
 The full gauntlet selects exactly 12 of 60 assets and exercises 17 constraint
-families. Gurobi returns \(-0.0320099372\) with a 0.0% reported gap. All 244
+families. Gurobi returns $-0.0320099372$ with a 0.0% reported gap. All 244
 independently recomputed checks pass, including 60 lower and 60 upper position
 checks, eligibility, mandatory holdings, group bands, turnover, return, income,
 factor bands, five stress floors, empirical 95% CVaR, and implementation caps.
 
-![Certified guardrail checks](../results/final_submission/figures/all_constraints_guardrails.png)
+![Certified guardrail checks](results/final_submission/figures/all_constraints_guardrails.png)
 
 The validator tolerates only configured numerical residuals; for example, the
-turnover residual is \(5.55\times10^{-17}\), effectively floating-point zero.
+turnover residual is $5.55\times10^{-17}$, effectively floating-point zero.
 The certificate demonstrates that zero breaches is not merely a summary flag:
 it is backed by row-level left-hand sides, limits, slacks, and pass/fail results.
 
 The larger scenario-rich case selects 25 of 250 assets while processing 10,000
 scenarios. Classical LNS returns the strongest sparse objective,
-\(-0.0376201667\), and zero breaches; the 16-qubit Aer-GPU XY proposal returns
-\(-0.0362818400\), 100% ideal cardinality, transpiled depth 43, and 61 two-qubit
+$-0.0376201667$, and zero breaches; the 16-qubit Aer-GPU XY proposal returns
+$-0.0362818400$, 100% ideal cardinality, transpiled depth 43, and 61 two-qubit
 gates. Seventeen constraint families and 858 independent checks pass. This is a
 validated heuristic result; no global MIQP certificate was completed.
 
-## 5.4 Tail-risk and preference controls
+### 5.4 Tail-risk and preference controls
 
 The scenario-penalty experiment evaluates six penalty weights with five
 repetitions each. All 30 allocations have zero breaches. Moving from no
-scenario penalty to \(\lambda_s=1\) reduces median held-out 95% CVaR from
+scenario penalty to $\lambda_s=1$ reduces median held-out 95% CVaR from
 11.1051% to 10.5619%, an absolute improvement of 54.31 basis points. A basis
 point is one hundredth of a percentage point. The trade-off is 41.55 basis
 points of expected return. The result is a continuous frontier rather than a
 claim that one setting is universally best.
 
-![Scenario penalty frontier](../results/final_submission/figures/scenario_penalty_frontier.png)
+![Scenario penalty frontier](results/final_submission/figures/scenario_penalty_frontier.png)
 
 One-at-a-time sensitivity sweeps also preserve feasibility. Raising risk
 aversion from 0.5 to 25 moves expected return from 7.95% to 5.46% and volatility
@@ -595,7 +596,7 @@ from 12.03% to 7.81%. Raising the income weight from 0 to 4 increases income
 yield from 2.18% to 2.50%. Raising the cost weight from 1 to 25 reduces turnover
 from 40.00% to 12.36% and estimated transaction cost from 5.81 to 0.71 basis
 points. In five repeated risk sweeps, the normalized frontier knee occurs at
-\(\lambda_r=3\) four times and \(\lambda_r=5\) once.
+$\lambda_r=3$ four times and $\lambda_r=5$ once.
 
 The named presets make these controls accessible to a non-specialist:
 
@@ -607,9 +608,9 @@ The named presets make these controls accessible to a non-specialist:
 | Drawdown control | 5.46% | 7.81% | 2.23% | 40.00% | 10.37% | 0 |
 | Cost sensitive | 6.18% | 8.66% | 2.21% | 30.00% | 11.56% | 0 |
 
-![Preference sensitivity](../results/final_submission/figures/preference_sensitivity.png)
+![Preference sensitivity](results/final_submission/figures/preference_sensitivity.png)
 
-## 5.5 Scenario-count scaling
+### 5.5 Scenario-count scaling
 
 The 250-asset CVaR continuous model is repeated with 500, 2,000, 10,000,
 50,000, and 100,000 scenarios. Clarabel's median time grows from 0.0186 to
@@ -618,7 +619,7 @@ with zero breaches. The 100,000-scenario return array occupies 190.74 MiB. This
 experiment isolates scenario growth from the discrete search and shows that
 tail-risk controls remain computationally manageable at the studied scale.
 
-## 5.6 Full-hybrid and stretch scaling
+### 5.6 Full-hybrid and stretch scaling
 
 The repeated full-hybrid study uses exactly 50 holdings, 12 factors, three
 adaptive 16-variable windows, and three seeds at each universe size from 250 to
@@ -637,7 +638,7 @@ Aer-GPU window at 1,000, 10,000, 20,000, 50,000, 80,000, 100,000, 150,000,
 output is 34.6929 seconds, complete hybrid time is 112.5998 seconds, and peak
 resident memory is 10.657 GiB.
 
-![Scaling runtime](../results/final_submission/figures/scaling_runtime.png)
+![Scaling runtime](results/final_submission/figures/scaling_runtime.png)
 
 Above 20,000 assets, most 30-second guide relaxations reach the time limit and
 the solver continues from a valid fallback. Their relaxation-gap cells are
@@ -649,9 +650,9 @@ MiB). One dense covariance would occupy 670.55 GiB, a storage ratio of about
 23,076 to 1. This dense figure is an analytical storage calculation; the dense
 matrix was intentionally not allocated.
 
-![Factor versus dense storage](../results/final_submission/figures/factor_vs_dense_memory.png)
+![Factor versus dense storage](results/final_submission/figures/factor_vs_dense_memory.png)
 
-## 5.7 Controlled quantum candidate benchmark
+### 5.7 Controlled quantum candidate benchmark
 
 The frozen 16-variable window compares candidate generators before the global
 window changes. Random fixed-weight sampling finds the largest objective
@@ -662,17 +663,17 @@ CPU, and Aer GPU each improve by 0.0006971 with five or six evaluated supports.
 Aer GPU is verified, but at this small workload it is slower than Aer CPU and
 the specialized subspace simulator.
 
-![Frozen-window candidate efficiency](../results/final_submission/figures/frozen_window_candidate_efficiency.png)
+![Frozen-window candidate efficiency](results/final_submission/figures/frozen_window_candidate_efficiency.png)
 
 The width-depth sweep explains the fixed 16-qubit design. The feasible
-subspace \(\binom{F}{r}\) grows from 70 states at \(F=8,r=4\) to 2,496,144 at
-\(F=24,r=11\). Depth-one subspace runtime grows from 0.059 seconds at width 8
+subspace $\binom{F}{r}$ grows from 70 states at $F=8,r=4$ to 2,496,144 at
+$F=24,r=11$. Depth-one subspace runtime grows from 0.059 seconds at width 8
 to 36.57 seconds at width 24. A second QAOA layer often improves QUBO energy
 but increases optimizer evaluations, logical gates, and runtime. Classical LNS
 produces the larger final objective improvement in every matched row of this
 sweep.
 
-## 5.8 IBM QPU audit
+### 5.8 IBM QPU audit
 
 The hardware campaign uses `ibm_kingston` version 1.0.0 with calibration
 timestamp 2026-08-07 00:37:20-04:00. Runtime job
@@ -683,12 +684,12 @@ transpiled depths of 171-923.
 
 The median raw fixed-cardinality survival across all 30 observations is 29.14%,
 with a minimum of 7.48% and maximum of 67.44%. Median survival falls from
-67.13% at \(F=8,p=1\) to 7.75% at \(F=28,p=1\); deeper 12- and 20-qubit
+67.13% at $F=8,p=1$ to 7.75% at $F=28,p=1$; deeper 12- and 20-qubit
 circuits also reduce survival. Nevertheless, postselection, exact allocation,
 and validation produce zero hard-constraint breaches in all 30 observations.
 The result validates the safety boundary, not noise-free cardinality.
 
-![IBM QPU frontier](../results/final_submission/figures/ibm_qpu_frontier.png)
+![IBM QPU frontier](results/final_submission/figures/ibm_qpu_frontier.png)
 
 Proposal quality is less favorable. The QPU objective improvement exceeds the
 matched-random result in only 6 of 30 strict comparisons. Median QPU improvement
@@ -699,7 +700,7 @@ correlation measures whether two rankings agree; one means identical ordering,
 zero means no monotonic ordering. Many top-QUBO supports therefore miss the
 best support after continuous allocation.
 
-![QUBO and allocation alignment](../results/final_submission/figures/qubo_alignment.png)
+![QUBO and allocation alignment](results/final_submission/figures/qubo_alignment.png)
 
 The correct conclusion is deliberately narrow: IBM hardware generated usable
 fixed-cardinality candidates through 28 qubits, and the classical safety layer
@@ -707,9 +708,9 @@ converted every reported observation into a valid portfolio. The experiment
 does **not** demonstrate a speed, quality, or scaling advantage over the best
 classical candidate generator.
 
-# 6. Output and explainability
+## 6. Output and explainability
 
-## 6.1 Portfolio output
+### 6.1 Portfolio output
 
 The final user-facing output is not a bitstring. It is a table with, for every
 asset, the current weight, recommended weight, buy or sell change, selection
@@ -727,7 +728,7 @@ An **active constraint** has zero or nearly zero slack, meaning the portfolio is
 at that rule's limit. Reporting active constraints explains why the optimizer
 cannot improve one goal without changing another rule or preference.
 
-## 6.2 Copilot interaction
+### 6.2 Copilot interaction
 
 The Streamlit Copilot exposes investor-friendly controls for growth, income,
 drawdown control, implementation cost, turnover, return, factor, stress, and
@@ -739,7 +740,7 @@ infeasibility instead of silently relaxing a rule. The command is:
 streamlit run src/vanguard_portfolio/copilot_app.py
 ```
 
-## 6.3 Evidence outputs
+### 6.3 Evidence outputs
 
 The curated evidence index is
 `results/final_submission/README.md`. The most important machine-readable files
@@ -747,9 +748,9 @@ are `evidence_summary.csv`, `claim_evidence_map.csv`, the row-level constraint
 certificates, the scaling run tables, and the IBM provenance and frontier
 tables. Figures are explanatory views of those tables, not standalone proof.
 
-# 7. Discussion
+## 7. Discussion
 
-## 7.1 What is strongest
+### 7.1 What is strongest
 
 The strongest challenge result is the combination of safety and scale. Exact
 small and medium cases validate the mathematics; a 17-family certificate shows
@@ -764,7 +765,7 @@ learned candidate generator can replace the proposal engine without changing
 the allocation oracle or validator. This makes quantum experimentation useful
 without making portfolio safety depend on a quantum claim.
 
-## 7.2 Why the quantum result is still informative
+### 7.2 Why the quantum result is still informative
 
 The negative quantum comparison diagnoses the interface rather than invalidating
 the entire approach. Exact QUBO/allocation rank correlations below 0.28 show
@@ -776,7 +777,7 @@ better allocation-aware surrogate; concentrate hardware trials on shallow,
 well-calibrated windows; and continue matching oracle-call and time budgets
 against strong classical and random baselines.
 
-## 7.3 Limitations
+### 7.3 Limitations
 
 The model is single-period and long-only. Expected returns, covariances, factor
 loadings, and scenarios are estimates and can be wrong. Linear transaction cost
@@ -794,7 +795,7 @@ campaign is one backend/calibration campaign, and its queue-inclusive wall time
 is not compared directly with local kernels. No result in this paper establishes
 quantum advantage.
 
-# 8. Reproducibility, tools, and contributions
+## 8. Reproducibility, tools, and contributions
 
 Every headline value in this paper maps to a repository table through
 `results/final_submission/claim_evidence_map.csv`. The supplied result archives
@@ -821,7 +822,7 @@ and analysis, visualization and presentation, and writing and review. The
 report does not assign those roles to named individuals because no verified
 team roster accompanied the result archives.
 
-# 9. Conclusion
+## 9. Conclusion
 
 This project delivers a practical hybrid portfolio optimizer whose most
 important invariant is simple: no proposal becomes a portfolio until exact
@@ -842,7 +843,7 @@ explainable, production-oriented system that is useful with today's classical
 tools and provides a fair, safe experimental slot for better quantum methods
 as hardware and encodings improve.
 
-# References
+## References
 
 1. H. Markowitz, “Portfolio Selection,” *The Journal of Finance*, 7(1),
    77-91, 1952. https://doi.org/10.1111/j.1540-6261.1952.tb01525.x
