@@ -19,7 +19,6 @@ The final study shows a production-safe solver today and a fair, auditable inter
 |---|---|
 | Understand the complete study and literature | [Final technical report](docs/portfolio_optimization_report.md) |
 | Present the challenge submission | [Editable PowerPoint](docs/presentation/portfolio_optimization_challenge_deck.pptx) or [presentation PDF](docs/presentation/portfolio_optimization_challenge_deck.pdf) |
-| Follow the presentation strategy and talk track | [Presentation plan](docs/presentation/README.md) |
 | Audit a headline result | [Final evidence index](results/final_submission/README.md) and [claim map](results/final_submission/claim_evidence_map.csv) |
 | Reproduce the full benchmark notebook | [Vanguard presentation benchmark suite](notebooks/Vanguard_Presentation_Benchmark_Suite.ipynb) |
 | Learn the model before reading code | [Mathematical model](docs/mathematical_model.md) and [hybrid algorithm](docs/final_hybrid_model.md) |
