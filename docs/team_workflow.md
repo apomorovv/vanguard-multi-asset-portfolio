@@ -11,8 +11,7 @@ This document assigns ownership for our  team and defines how model, quantum, an
 | **Kirankumar Dhanireddy** | Software engineering, reproducibility, and prototype lead | Repository architecture; canonical schemas and interfaces; packaging, configurations, scripts, tests, and release checks; result/artifact pipeline; Streamlit portfolio co-pilot and reproducible execution workflow. |
 
 Andrei is accountable for overall scientific consistency, Ilia for the quantum
-evidence, and Kirankumar for codebase and release quality. Accountability does
-not replace review: no team member approves their own cross-cutting change.
+evidence, and Kirankumar for codebase and release quality.
 
 ## Challenge-requirement ownership
 
