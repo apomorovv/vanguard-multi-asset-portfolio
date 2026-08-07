@@ -270,8 +270,3 @@ factors, and scenarios are estimates. Linear cost does not represent nonlinear
 market impact. Taxes, tax lots, leverage, shorting, and multi-period recourse
 are outside the present scope. Hardware noise, postselection, QPU queueing, and
 weak QUBO/allocation rank alignment currently limit quantum proposal quality.
-
-AI-assisted coding and writing tools supported review, analysis organization,
-test scaffolding, and documentation. Numerical results come from the preserved
-experiment outputs and independent validation tables. See the report for the
-full disclosure and references.
