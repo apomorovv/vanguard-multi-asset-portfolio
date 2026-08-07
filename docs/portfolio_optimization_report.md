@@ -792,6 +792,14 @@ Best-tail quality is the normalized quality of the best 10% of postselected
 energies: one matches the exact or best-known QUBO reference and larger is
 better.
 
+![Risk-return outcomes after exact allocation](../results/final_submission/figures/risk_return_meanvariance.png)
+
+Mapping the postselected hardware proposal back into risk-return space shows
+it landing on the classical mean-variance frontier alongside the continuous
+relaxation, classical tabu/LNS, and the valid initial portfolio — the
+QPU result and classical tabu/LNS are close to indistinguishable
+here, both sitting just inside the frontier at similar volatility and return.
+
 | Case | Two-qubit gates | Transpiled depth | Raw survival | Best-tail quality | QPU improvement | Random improvement | Advance? |
 |---|---:|---:|---:|---:|---:|---:|:---:|
 | $F=8,p=1$ | 101 | 171 | 67.13% | 0.997 | 0.002253 | 0.002253 | Yes |
