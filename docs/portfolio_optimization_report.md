@@ -652,7 +652,7 @@ from 40.00% to 12.36% and estimated transaction cost from 5.81 to 0.71 basis
 points. In five repeated risk sweeps, the normalized frontier knee occurs at
 $\lambda_r=3$ four times and $\lambda_r=5$ once.
 
-![Continuous mean-variance risk-aversion sweep](../results/final_submission/figures/risk_aversion_sweep.png)
+![Continuous mean-variance risk-aversion sweep](../results/archive/large_example/risk_aversion_sweep.png)
 
 The named presets make these controls accessible to a non-specialist:
 
