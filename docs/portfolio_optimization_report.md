@@ -207,13 +207,8 @@ is the set $S=\{i:w_i>0\}$; its size is the portfolio's **cardinality**.
 
 The canonical model minimizes
 
-$$
-\lambda_r w^T\Sigma w
--\lambda_g\mu^T w
--\lambda_y y^T w
-+\lambda_c c^Tt
-+\lambda_s\Phi(w).
-\tag{1}
+$$ 
+\lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt +\lambda_s\Phi(w). \tag{1}
 $$
 
 The terms are, in order, variance risk, expected growth, income, trading cost,
