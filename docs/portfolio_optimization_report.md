@@ -802,6 +802,15 @@ relaxation, classical tabu/LNS, and the valid initial portfolio — the
 QPU result and classical tabu/LNS are close to indistinguishable
 here, both sitting just inside the frontier at similar volatility and return.
 
+The full width-depth grid, including depths not selected for the go/no-go
+table above, makes the same pattern visible at a glance: fixed-weight
+survival falls sharply as width increases, and best-tail quality follows a
+similar but noisier decline. Deeper circuits at fixed width generally
+improve quality (e.g. $F=12$: 0.95 at $p=1$ rising to 0.98 at $p=3$) but do
+not reverse the width-driven decline.
+
+![Survival and quality across the width-depth grid](../results/final_submission/figures/qpu_width_depth_grid.png)
+
 | Case | Two-qubit gates | Transpiled depth | Raw survival | Best-tail quality | QPU improvement | Random improvement | Advance? |
 |---|---:|---:|---:|---:|---:|---:|:---:|
 | $F=8,p=1$ | 101 | 171 | 67.13% | 0.997 | 0.002253 | 0.002253 | Yes |
