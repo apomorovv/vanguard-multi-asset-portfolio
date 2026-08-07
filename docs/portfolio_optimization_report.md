@@ -988,10 +988,13 @@ rather than waiting for a single final solution.
 The quantum experiments reveal that the main limitation is not simply the number of qubits. The QUBO used by the quantum optimizer is only a surrogate for the real portfolio objective. The final value of a proposed support is known only after the continuous allocation problem is solved.
 
 The current results show relatively weak agreement between QUBO energy and the final allocated portfolio objective. Therefore, increasing QAOA depth or circuit width alone is unlikely to solve the main problem.
+A higher priority is to build a better approximation of the support value
 
-A higher priority is to build a better approximation of the support value V(S) = $$ \min_{w:\operatorname{supp}(w)\subseteq S} f(w) $$
+$$
+V(S)=\min_{w:\operatorname{supp}(w)\subseteq S} f(w)
+$$
 
-where \(S\) is a proposed set of assets and \(V(S)\) is the objective after continuous allocation.
+where $S$ is a proposed set of assets and $V(S)$ is the objective after continuous allocation.
 
 Future work could use allocation-solver gradients, dual variables, local second-order approximations, bilevel models, or learned ranking models to construct a more allocation-aware QUBO.
 
@@ -1042,20 +1045,17 @@ The main future research goal is therefore not simply to make the optimizer larg
 
 The strongest long-term architecture would combine
 
+$$
 \boxed{
-\text{real data}
-+
-\text{robust forecasts}
-+
-\text{realistic trading costs}
-+
-\text{multi-period decisions}
-+
-\text{scalable optimization}
-+
-\text{independent validation}
+\begin{aligned}
+&\text{real data} \\
+&+\,\text{robust forecasts} \\
+&+\,\text{realistic trading costs} \\
+&+\,\text{multi-period decisions} \\
+&+\,\text{scalable optimization} \\
+&+\,\text{independent validation}
 }
-
+$$
 
 while keeping quantum computing as a replaceable candidate-generation component. This makes the system useful with today's classical methods while preserving a clear path for future quantum improvements.
 
