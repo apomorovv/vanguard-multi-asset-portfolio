@@ -2,7 +2,7 @@
 
 The repository keeps two kinds of result material:
 
-1. generated experiment directories created by the command-line scripts; and
+1. generated experiment directories created by the command-line scripts in  [`archive/`](archive/); and
 2. the curated, versioned final evidence package in
    [`final_submission/`](final_submission/).
 
