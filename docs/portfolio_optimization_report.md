@@ -220,83 +220,55 @@ minimization objective. **Lower objective values are better, but the objective
 is a composite ranking score—not a percentage return.** Results therefore
 report return, volatility, income, turnover, tail loss, and breaches separately.
 
-### 2.3 Hard guardrails
+### 2.3 Hard guardrails The core constraints are 
 
-The core constraints are
-
-$$
-\begin{aligned}
-&\mathbf{1}^T w = 1, &&\text{full investment},\\
-&w_i\ge0, &&\text{long-only positions},\\
-&m_i z_i\le w_i\le u_i z_i, &&\text{selection and position limits},\\
-&\sum_{i=1}^{n}z_i=K, &&\text{exact cardinality},\\
-&L_g\le\sum_{i\in g}w_i\le U_g, &&\text{group exposure bands},\\
-&\sum_i t_i\le T_{\max}, &&\text{turnover cap}.
-\end{aligned}
-\tag{2}
+$$ 
+\begin{aligned} 
+&\mathbf{1}^T w = 1, &&\text{full investment},\\ 
+&w_i\ge0, &&\text{long-only positions},\\ 
+&m_i z_i\le w_i\le u_i z_i, &&\text{selection and position limits},\\ 
+&\sum_{i=1}^{n}z_i=K, &&\text{exact cardinality},\\ 
+&L_g\le\sum_{i\in g}w_i\le U_g, &&\text{group exposure bands},\\ 
+&\sum_i t_i\le T_{\max}, &&\text{turnover cap}. 
+\end{aligned} \quad (2)
 $$
 
-Here $\mathbf{1}$ is a vector of ones, so the first line states that weights
-sum to 100%. A group $g$ may be an asset class, region, sector, or any policy
-bucket, and $L_g,U_g$ are its minimum and maximum allocation. The turnover
-definition is the two-way $L_1$ change; a 40% $L_1$ cap corresponds to 20%
-one-way buys in a fully invested rebalance.
+Here $\mathbf{1}$ is a vector of ones, so the first line states that weights sum to 100%. A group $g$ may be an asset class, region, sector, or any policy bucket, and $L_g,U_g$ are its minimum and maximum allocation. The turnover definition is the two-way $L_1$ change; a 40% $L_1$ cap corresponds to 20% one-way buys in a fully invested rebalance. When enabled, the model also enforces 
 
-When enabled, the model also enforces
-
-$$
-\begin{aligned}
-&z_i=0 &&\text{for ineligible assets},\\
-&z_i=1 &&\text{for mandatory assets},\\
-&\mu^T w\ge R_{\min} &&\text{minimum expected return},\\
-&y^T w\ge Y_{\min} &&\text{minimum income},\\
-&f_{\min}\le B^T w\le f_{\max} &&\text{factor-exposure bands},\\
-&R_s^T w\ge q_s &&\text{stress-scenario floor},\\
-&\operatorname{CVaR}_{\alpha}(w)\le C_{\max} &&\text{tail-loss limit},\\
-&w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}.
-\end{aligned}
-\tag{3}
+$$ 
+\begin{aligned} 
+&z_i=0 &&\text{for ineligible assets},\\ 
+&z_i=1 &&\text{for mandatory assets},\\ 
+&\mu^T w\ge R_{\min} &&\text{minimum expected return},\\ 
+&y^T w\ge Y_{\min} &&\text{minimum income},\\ 
+&f_{\min}\le B^T w\le f_{\max} &&\text{factor-exposure bands},\\ 
+&R_s^T w\ge q_s &&\text{stress-scenario floor},\\ 
+&\operatorname{CVaR}_{\alpha}(w)\le C_{\max} &&\text{tail-loss limit},\\ 
+&w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}. 
+\end{aligned} \quad (3)
 $$
 
-An implementation cap is a potentially tighter tradability limit derived from
-liquidity or operational rules. Factor exposure $B^Tw$ measures the
-portfolio's sensitivity to common drivers. A stress floor limits loss under a
-named scenario. For scenario losses $\ell_s(w)=-R_s^Tw$, empirical CVaR at
-confidence $\alpha$ is represented by
+An implementation cap is a potentially tighter tradability limit derived from liquidity or operational rules. Factor exposure $B^Tw$ measures the portfolio's sensitivity to common drivers. A stress floor limits loss under a named scenario. For scenario losses $\ell_s(w)=-R_s^Tw$, empirical CVaR at confidence $\alpha$ is represented by 
 
-$$
-\operatorname{CVaR}_{\alpha}(w)=
-\eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s,
-\quad
-\xi_s\ge \ell_s(w)-\eta,
-\quad \xi_s\ge0,
-\tag{4}
+$$ 
+\operatorname{CVaR}_{\alpha}(w)= \eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s, \quad \xi_s\ge \ell_s(w)-\eta, \quad \xi_s\ge0, \quad (4)
 $$
 
-where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss
-above that threshold [2].
+where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss above that threshold. 
 
-### 2.4 Factor-native risk
+### 2.4 Factor-native risk For large universes the covariance is represented as 
 
-For large universes the covariance is represented as
-
-$$
-\Sigma=B\Omega B^T+D,
-\tag{5}
+$$ 
+\Sigma=B\Omega B^T+D, \quad (5)
 $$
 
-where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings,
-$\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance, and $D$ is a
-diagonal matrix of asset-specific variances. Portfolio variance becomes
+where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings, $\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance, and $D$ is a diagonal matrix of asset-specific variances. Portfolio variance becomes 
 
-$$
-w^T\Sigma w=(B^Tw)^T\Omega(B^Tw)+\sum_i D_{ii}w_i^2.
-\tag{6}
+$$ 
+w^T\Sigma w=(B^Tw)^T\Omega(B^Tw)+\sum_i D_{ii}w_i^2. \quad (6)
 $$
 
-Equation (6) can be evaluated without forming an $n\times n$ matrix. With a
-fixed factor count, the dominant stored arrays grow linearly with $n$, while
-a dense covariance grows quadratically.
+Equation (6) can be evaluated without forming an $n\times n$ matrix. With a fixed factor count, the dominant stored arrays grow linearly with $n$, while a dense covariance grows quadratically.
 
 ## 3. Algorithm
 
