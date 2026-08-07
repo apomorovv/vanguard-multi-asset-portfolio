@@ -210,6 +210,7 @@ $$
 -\lambda_y y^\top w
 +\lambda_c c^\top t
 +\lambda_s\Phi(w).
+\qquad\text{(1)}
 $$
 
 The terms are, in order, variance risk, expected growth, income, trading cost,
