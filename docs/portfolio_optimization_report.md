@@ -331,7 +331,7 @@ candidate therefore cannot erase feasibility.
 The continuous guide supplies two things: a lower bound when it is solved to
 the required status, and a ranking signal for promising assets. It does not
 solve the sparse problem because it may use more than $K$ nonzero weights.
-A deterministic initialization then assembles an exact-$K$ support and calls
+A deterministic initialization then assembles an exact- $K$ support and calls
 the allocation oracle. Mandatory holdings are protected, group floors are
 covered, and ranked alternatives are tried before a feasibility MILP is used.
 The search begins only after this portfolio passes independent validation.
