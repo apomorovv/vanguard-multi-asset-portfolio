@@ -26,14 +26,13 @@ The strongest correctness results are exact: four continuous solvers agree to
 an objective spread of $1.41\times10^{-9}$; tiny exhaustive enumeration and
 Gurobi return the same sparse optimum; the 100-asset case is solved to a 0.0%
 reported mixed-integer gap; and a separate 60-asset gauntlet passes 244 checks
-across 17 constraint families at a globally optimal objective of
-$-0.0320099372$. The broader study remains feasible as the workload grows. A
-250-asset, 10,000-scenario case passes 858 independent checks. All 21 repeated
-full-hybrid runs from 250 to 20,000 assets and all 27 stretch runs from 1,000 to
-300,000 assets return valid portfolios with zero reported hard-constraint
-breaches. At 300,000 assets, median time to the first valid 50-asset portfolio
-is 34.69 seconds, median complete search time is 112.60 seconds, and the factor
-risk arrays occupy 29.76 MiB instead of the 670.55 GiB required by one dense
+across 17 constraint families at a globally optimal objective. The broader study 
+remains feasible as the workload grows. A 250-asset, 10,000-scenario case passes 
+858 independent checks. All the full-hybrid runs from 250 to 20,000 assets 
+and all the stretch runs from 1,000 to 300,000 assets return valid portfolios with 
+zero reported hard-constraint breaches. At 300,000 assets, median time to the first 
+valid 50-asset portfolio is 34.69 seconds, median complete search time is 112.60 seconds, 
+and the factor risk arrays occupy 29.76 MiB instead of the 670.55 GiB required by one dense
 double-precision covariance matrix. The stretch runs are heuristic scaling
 measurements, not global optimality certificates.
 
@@ -41,9 +40,7 @@ On IBM hardware, one 8,192-shot Runtime job evaluates ten width-depth cases
 from 8 to 28 qubits with three repeated observations per case. The median raw
 fixed-cardinality survival rate is 29.14%; all 30 post-allocated observations
 still pass the financial validator. However, the QPU proposal beats a
-matched-random proposal in only 6 of 30 strict comparisons, and the QUBO
-surrogate has only 0.237-0.276 Spearman rank correlation with the final
-allocated objective in exact 8-, 12-, and 16-variable enumerations. The study
+matched-random proposal in only 6 of 30 strict comparisons. The study
 therefore makes no quantum-advantage claim. Its contribution is a scalable,
 auditable interface in which quantum hardware can propose local supports
 without being allowed to violate portfolio rules or assign the final capital.
