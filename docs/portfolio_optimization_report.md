@@ -991,7 +991,7 @@ The current results show relatively weak agreement between QUBO energy and the f
 A higher priority is to build a better approximation of the support value
 
 $$
-V(S)=\min_{w:\operatorname{supp}(w)\subseteq S} f(w)
+V(S)=\min_{w:\mathrm{supp}(w)\subseteq S} f(w)
 $$
 
 where $S$ is a proposed set of assets and $V(S)$ is the objective after continuous allocation.
@@ -1054,6 +1054,7 @@ $$
 &+\,\text{multi-period decisions} \\
 &+\,\text{scalable optimization} \\
 &+\,\text{independent validation}
+\end{aligned}
 }
 $$
 
