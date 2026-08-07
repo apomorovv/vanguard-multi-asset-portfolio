@@ -1,0 +1,3 @@
+elapsed_seconds,iteration,method,objective,stage
+24.819838512688875,0,feasible_initial_portfolio,-0.036113824370397105,initial
+41.096683375537395,1,best_valid,-0.03762016669018633,window

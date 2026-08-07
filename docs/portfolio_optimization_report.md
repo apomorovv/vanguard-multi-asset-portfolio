@@ -207,8 +207,13 @@ is the set $S=\{i:w_i>0\}$; its size is the portfolio's **cardinality**.
 
 The canonical model minimizes
 
-$$ 
-\lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt +\lambda_s\Phi(w). \quad (1) 
+$$
+\lambda_r w^\top\Sigma w
+-\lambda_g\mu^\top w
+-\lambda_y y^\top w
++\lambda_c c^\top t
++\lambda_s\Phi(w).
+\tag{1}
 $$
 
 The terms are, in order, variance risk, expected growth, income, trading cost,
@@ -220,55 +225,83 @@ minimization objective. **Lower objective values are better, but the objective
 is a composite ranking score—not a percentage return.** Results therefore
 report return, volatility, income, turnover, tail loss, and breaches separately.
 
-### 2.3 Hard guardrails The core constraints are 
+### 2.3 Hard guardrails
 
-$$ 
-\begin{aligned} 
-&\mathbf{1}^T w = 1, &&\text{full investment},\\ 
-&w_i\ge0, &&\text{long-only positions},\\ 
-&m_i z_i\le w_i\le u_i z_i, &&\text{selection and position limits},\\ 
-&\sum_{i=1}^{n}z_i=K, &&\text{exact cardinality},\\ 
-&L_g\le\sum_{i\in g}w_i\le U_g, &&\text{group exposure bands},\\ 
-&\sum_i t_i\le T_{\max}, &&\text{turnover cap}. 
-\end{aligned} \quad (2)
+The core constraints are
+
+$$
+\begin{aligned}
+&\mathbf{1}^\top w = 1, &&\text{full investment},\\
+&w_i\ge0, &&\text{long-only positions},\\
+&m_i z_i\le w_i\le u_i z_i, &&\text{selection and position limits},\\
+&\sum_{i=1}^{n}z_i=K, &&\text{exact cardinality},\\
+&L_g\le\sum_{i\in g}w_i\le U_g, &&\text{group exposure bands},\\
+&\sum_i t_i\le T_{\max}, &&\text{turnover cap}.
+\end{aligned}
+\tag{2}
 $$
 
-Here $\mathbf{1}$ is a vector of ones, so the first line states that weights sum to 100%. A group $g$ may be an asset class, region, sector, or any policy bucket, and $L_g,U_g$ are its minimum and maximum allocation. The turnover definition is the two-way $L_1$ change; a 40% $L_1$ cap corresponds to 20% one-way buys in a fully invested rebalance. When enabled, the model also enforces 
+Here $\mathbf{1}$ is a vector of ones, so the first line states that weights
+sum to 100%. A group $g$ may be an asset class, region, sector, or any policy
+bucket, and $L_g,U_g$ are its minimum and maximum allocation. The turnover
+definition is the two-way $L_1$ change; a 40% $L_1$ cap corresponds to 20%
+one-way buys in a fully invested rebalance.
 
-$$ 
-\begin{aligned} 
-&z_i=0 &&\text{for ineligible assets},\\ 
-&z_i=1 &&\text{for mandatory assets},\\ 
-&\mu^T w\ge R_{\min} &&\text{minimum expected return},\\ 
-&y^T w\ge Y_{\min} &&\text{minimum income},\\ 
-&f_{\min}\le B^T w\le f_{\max} &&\text{factor-exposure bands},\\ 
-&R_s^T w\ge q_s &&\text{stress-scenario floor},\\ 
-&\operatorname{CVaR}_{\alpha}(w)\le C_{\max} &&\text{tail-loss limit},\\ 
-&w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}. 
-\end{aligned} \quad (3)
+When enabled, the model also enforces
+
+$$
+\begin{aligned}
+&z_i=0 &&\text{for ineligible assets},\\
+&z_i=1 &&\text{for mandatory assets},\\
+&\mu^\top w\ge R_{\min} &&\text{minimum expected return},\\
+&y^\top w\ge Y_{\min} &&\text{minimum income},\\
+&f_{\min}\le B^\top w\le f_{\max} &&\text{factor-exposure bands},\\
+&R_s^\top w\ge q_s &&\text{stress-scenario floor},\\
+&\mathrm{CVaR}_{\alpha}(w)\le C_{\max} &&\text{tail-loss limit},\\
+&w_i\le \bar u_i^{\mathrm{impl}} &&\text{implementation cap}.
+\end{aligned}
+\tag{3}
 $$
 
-An implementation cap is a potentially tighter tradability limit derived from liquidity or operational rules. Factor exposure $B^Tw$ measures the portfolio's sensitivity to common drivers. A stress floor limits loss under a named scenario. For scenario losses $\ell_s(w)=-R_s^Tw$, empirical CVaR at confidence $\alpha$ is represented by 
+An implementation cap is a potentially tighter tradability limit derived from
+liquidity or operational rules. Factor exposure $B^\top w$ measures the
+portfolio's sensitivity to common drivers. A stress floor limits loss under a
+named scenario. For scenario losses $\ell_s(w)=-R_s^\top w$, empirical CVaR at
+confidence $\alpha$ is represented by
 
-$$ 
-\operatorname{CVaR}_{\alpha}(w)= \eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s, \quad \xi_s\ge \ell_s(w)-\eta, \quad \xi_s\ge0, \quad (4)
+$$
+\begin{aligned}
+\mathrm{CVaR}_{\alpha}(w)
+&=\eta+\frac{1}{(1-\alpha)N_s}\sum_{s=1}^{N_s}\xi_s,\\
+\xi_s&\ge \ell_s(w)-\eta,\qquad \xi_s\ge0.
+\end{aligned}
+\tag{4}
 $$
 
-where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss above that threshold. 
+where $\eta$ is a loss threshold and $\xi_s$ is scenario $s$'s loss above that
+threshold [2].
 
-### 2.4 Factor-native risk For large universes the covariance is represented as 
+### 2.4 Factor-native risk
 
-$$ 
-\Sigma=B\Omega B^T+D, \quad (5)
+For large universes the covariance is represented as
+
+$$
+\Sigma=B\Omega B^\top+D.
+\tag{5}
 $$
 
-where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings, $\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance, and $D$ is a diagonal matrix of asset-specific variances. Portfolio variance becomes 
+where $B\in\mathbb{R}^{n\times k}$ holds $k$ factor loadings,
+$\Omega\in\mathbb{R}^{k\times k}$ is the factor covariance, and $D$ is a
+diagonal matrix of asset-specific variances. Portfolio variance becomes
 
-$$ 
-w^T\Sigma w=(B^Tw)^T\Omega(B^Tw)+\sum_i D_{ii}w_i^2. \quad (6)
+$$
+w^\top\Sigma w=(B^\top w)^\top\Omega(B^\top w)+\sum_i D_{ii}w_i^2.
+\tag{6}
 $$
 
-Equation (6) can be evaluated without forming an $n\times n$ matrix. With a fixed factor count, the dominant stored arrays grow linearly with $n$, while a dense covariance grows quadratically.
+Equation (6) can be evaluated without forming an $n\times n$ matrix. With a
+fixed factor count, the dominant stored arrays grow linearly with $n$, while a
+dense covariance grows quadratically.
 
 ## 3. Algorithm
 
@@ -415,15 +448,19 @@ random seed, software environment, solver status, raw tables, checksums, and
 plots. The original supplied archives and challenge brief are fingerprinted in
 `results/final_submission/archive_manifest.csv`.
 
-The benchmark suite contains 224 relevant files before duplicate and temporary
-notebook artifacts are removed: 73 CSV tables, 24 JSON records, 64 PNG figures,
-52 PDF figures or documents, six Markdown reports, four text files, and one YAML
-configuration. The curated repository package preserves the source tables,
-provenance, and presentation figures needed to audit every headline claim;
-very large duplicate diagnostics, raw shot-count payloads, and machine-specific
-environment inventories remain represented by archive checksums rather than
-duplicated in Git. The resolved numerical and solver settings are published;
-one absolute output path is normalized to its repository-relative equivalent.
+The benchmark suite contains 224 relevant files after macOS resource forks and
+temporary notebook checkpoints are excluded: 73 CSV tables, 24 JSON records,
+64 PNG figures, 52 PDF figures or documents, six Markdown reports, four text
+files, and one YAML configuration. The
+[complete unpacked evidence tree](../results/archive/README.md) is published in
+`results/archive/`. A file-level manifest records the path, byte count,
+original SHA-256 digest, and publication storage form of every result. The one
+73.5 MB JSON diagnostic is stored losslessly as a browser-tree `.json.gz`
+file. Environment snapshots are published with local host, CPU/GPU, platform,
+executable, and installed-package details redacted; their original hashes and
+the three source-ZIP hashes are retained for provenance. The smaller
+`results/final_submission/` directory remains the curated claim-to-evidence
+view for judges who do not need the complete raw package.
 
 ### 4.2 Experimental cases
 
@@ -491,6 +528,28 @@ All are feasible. This result establishes a strong classical baseline and
 shows that the project did not adopt a quantum method before validating the
 classical model.
 
+| Model | Method | Best objective | Gap to its reference | Median runtime (s) |
+|---|---|---:|---:|---:|
+| Continuous | OSQP | -0.09852503 | $9.80\times10^{-10}$ | 0.0337 |
+| Continuous | Gurobi QP | -0.09852503 | $1.01\times10^{-9}$ | 0.0404 |
+| Continuous | Clarabel | **-0.09852504** | 0 | 0.0481 |
+| Continuous | SciPy SLSQP | -0.09852502 | $1.59\times10^{-8}$ | 16.9679 |
+| 1,000-unit discrete | Gurobi MIQP | **-0.09852495** | 0 | 0.0557 |
+| 1,000-unit discrete | SCIP MIQP | -0.09852490 | $4.73\times10^{-8}$ | 0.6986 |
+| 1,000-unit discrete | Swap local search | -0.09852466 | $2.88\times10^{-7}$ | 3.9821 |
+| 1,000-unit discrete | Simulated-annealing swap | -0.09852466 | $2.88\times10^{-7}$ | 3.9946 |
+
+The table separates the continuous and equal-lot references because the
+continuous relaxation is allowed to use arbitrary weights and can therefore
+have a slightly lower objective. It also shows why solver choice matters:
+SLSQP agrees numerically but takes roughly 500 times as long as OSQP in this
+case, while the exact Gurobi discrete solve is much faster than the tested swap
+heuristics.
+
+![Independent classical solver runtime](../results/archive/large_example/runtime_comparison.png)
+
+![Independent classical risk-return comparison](../results/archive/large_example/risk_return.png)
+
 ### 5.2 Main 100-asset result
 
 The main case requires exactly 20 holdings. Gurobi certifies the global sparse
@@ -523,6 +582,14 @@ its median terminal wealth is 1.7692 and return-to-volatility ratio is 0.7106.
 This is a useful warning against equating one estimated objective with certain
 future performance.
 
+The full path distributions reinforce that caution. LNS, XY-QAOA, and penalty
+QAOA share the same final support in this experiment, so their box plots
+coincide. Their median improvement over the initialization is visible, but the
+wide and strongly overlapping path ranges do not support a claim of forecast
+superiority over the certified MIQP portfolio.
+
+![Main-case out-of-sample robustness](../results/archive/presentation_benchmark_suite/02_main_100_asset_case/backtest_robustness.png)
+
 ### 5.3 All-constraint certification
 
 The full gauntlet selects exactly 12 of 60 assets and exercises 17 constraint
@@ -531,7 +598,7 @@ independently recomputed checks pass, including 60 lower and 60 upper position
 checks, eligibility, mandatory holdings, group bands, turnover, return, income,
 factor bands, five stress floors, empirical 95% CVaR, and implementation caps.
 
-![Certified guardrail checks](results/final_submission/figures/all_constraints_guardrails.png)
+![Certified guardrail checks](../results/final_submission/figures/all_constraints_guardrails.png)
 
 The validator tolerates only configured numerical residuals; for example, the
 turnover residual is $5.55\times10^{-17}$, effectively floating-point zero.
@@ -545,6 +612,20 @@ $-0.0362818400$, 100% ideal cardinality, transpiled depth 43, and 61 two-qubit
 gates. Seventeen constraint families and 858 independent checks pass. This is a
 validated heuristic result; no global MIQP certificate was completed.
 
+A separate constraint ablation shows what is paid for progressively richer
+guardrails. All three variants remain feasible under the rules enabled in that
+variant, but the fully constrained solve takes 0.6625 seconds instead of
+0.0627 seconds for the return-income-factor model. The identical objectives in
+the last two rows mean that the final guardrails are inactive at this
+particular optimum; they still have to be modeled and checked because a
+different instance or preference setting can make them binding.
+
+| Enabled model | Objective | Return | Volatility | Income | Turnover | Runtime (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| Core | -0.036810 | 6.17% | 8.64% | 2.64% | 40.00% | 0.1347 |
+| Return, income, and factor rules | -0.033676 | 6.17% | 8.92% | 2.46% | 29.17% | 0.0627 |
+| All constraint families | -0.033676 | 6.17% | 8.92% | 2.46% | 29.17% | 0.6625 |
+
 ### 5.4 Tail-risk and preference controls
 
 The scenario-penalty experiment evaluates six penalty weights with five
@@ -555,7 +636,15 @@ point is one hundredth of a percentage point. The trade-off is 41.55 basis
 points of expected return. The result is a continuous frontier rather than a
 claim that one setting is universally best.
 
-![Scenario penalty frontier](results/final_submission/figures/scenario_penalty_frontier.png)
+![Scenario penalty frontier](../results/final_submission/figures/scenario_penalty_frontier.png)
+
+At $\lambda_s=1$, the median $L_1$ distance from the unpenalized allocation is
+23.51%, equivalent to 11.75% one-way reallocation when both portfolios sum to
+one. Median solve time is 0.0441 seconds. The tail-risk improvement therefore
+comes from a material but controlled change in holdings, not merely from
+rescaling the reported objective.
+
+![Scenario-penalty allocation shift](../results/archive/presentation_benchmark_suite/03b_scenario_penalty_frontier/scenario_penalty_allocation_shift.png)
 
 One-at-a-time sensitivity sweeps also preserve feasibility. Raising risk
 aversion from 0.5 to 25 moves expected return from 7.95% to 5.46% and volatility
@@ -575,7 +664,13 @@ The named presets make these controls accessible to a non-specialist:
 | Drawdown control | 5.46% | 7.81% | 2.23% | 40.00% | 10.37% | 0 |
 | Cost sensitive | 6.18% | 8.66% | 2.21% | 30.00% | 11.56% | 0 |
 
-![Preference sensitivity](results/final_submission/figures/preference_sensitivity.png)
+![Preference sensitivity](../results/final_submission/figures/preference_sensitivity.png)
+
+Each preset is repeated five times on independently seeded synthetic universes,
+for 30 profile runs in total. Every run has zero breaches, and median solve
+times remain between 0.00438 and 0.00482 seconds. This is useful operationally:
+the preference controls are inexpensive enough for interactive use, while the
+validator still checks the resulting allocation after every change.
 
 ### 5.5 Scenario-count scaling
 
@@ -585,6 +680,21 @@ The 250-asset CVaR continuous model is repeated with 500, 2,000, 10,000,
 with zero breaches. The 100,000-scenario return array occupies 190.74 MiB. This
 experiment isolates scenario growth from the discrete search and shows that
 tail-risk controls remain computationally manageable at the studied scale.
+
+| Backend | Scenarios | Median total (s) | Median build (s) | Median solve (s) | Matrix nonzeros | Worst violation |
+|---|---:|---:|---:|---:|---:|---:|
+| Clarabel | 500 | 0.0186 | 0.0035 | 0.0084 | 15,287 | $2.06\times10^{-13}$ |
+| Clarabel | 10,000 | 0.4248 | 0.0116 | 0.3611 | 290,787 | $5.01\times10^{-13}$ |
+| Clarabel | 100,000 | 13.9239 | 0.1308 | 13.2537 | 2,900,787 | $2.89\times10^{-15}$ |
+| OSQP | 500 | 0.0198 | 0.0033 | 0.0107 | 15,238 | $6.36\times10^{-9}$ |
+| OSQP | 10,000 | 0.7367 | 0.0090 | 0.7011 | 290,738 | $5.85\times10^{-9}$ |
+| OSQP | 100,000 | 13.6907 | 0.0923 | 13.2720 | 2,900,738 | $1.50\times10^{-8}$ |
+
+The sparse constraint matrix grows almost linearly with scenario count. At
+100,000 scenarios, native solve time—not Python model construction—is the
+dominant cost for both backends.
+
+![Scenario-count scaling with all constraints](../results/archive/presentation_benchmark_suite/03_all_constraints_scenario_scaling/all_constraints_scenario_scaling.png)
 
 ### 5.6 Full-hybrid and stretch scaling
 
@@ -605,7 +715,21 @@ Aer-GPU window at 1,000, 10,000, 20,000, 50,000, 80,000, 100,000, 150,000,
 output is 34.6929 seconds, complete hybrid time is 112.5998 seconds, and peak
 resident memory is 10.657 GiB.
 
-![Scaling runtime](results/final_submission/figures/scaling_runtime.png)
+| Protocol | Assets | First valid (s) | Guide (s) | Initialization (s) | Classical window (s) | Quantum window (s) | Complete (s) | Peak RSS (GiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Full hybrid | 250 | 0.033 | 0.011 | 0.021 | 1.020 | 0.435 | 1.494 | 0.202 |
+| Full hybrid | 10,000 | 9.585 | 9.424 | 0.150 | 8.713 | 2.966 | 20.057 | 1.869 |
+| Full hybrid | 20,000 | 30.354 | 30.030 | 0.354 | 21.168 | 4.053 | 54.916 | 3.538 |
+| Stretch | 100,000 | 31.494 | 30.137 | 1.267 | 7.179 | 4.629 | 47.278 | 2.351 |
+| Stretch | 300,000 | 34.693 | 30.460 | 3.971 | 23.628 | 38.610 | 112.600 | 10.657 |
+
+These are medians of separately recorded stages, so a row need not add exactly
+because medians are not generally additive. The breakdown reveals the actual
+bottleneck transition: the 30-second guide cap dominates time to first
+validity above 20,000 assets, while candidate generation and window overhead
+dominate the remaining search at the largest sizes.
+
+![Scaling runtime](../results/final_submission/figures/scaling_runtime.png)
 
 Above 20,000 assets, most 30-second guide relaxations reach the time limit and
 the solver continues from a valid fallback. Their relaxation-gap cells are
@@ -617,7 +741,7 @@ MiB). One dense covariance would occupy 670.55 GiB, a storage ratio of about
 23,076 to 1. This dense figure is an analytical storage calculation; the dense
 matrix was intentionally not allocated.
 
-![Factor versus dense storage](results/final_submission/figures/factor_vs_dense_memory.png)
+![Factor versus dense storage](../results/final_submission/figures/factor_vs_dense_memory.png)
 
 ### 5.7 Controlled quantum candidate benchmark
 
@@ -630,7 +754,7 @@ CPU, and Aer GPU each improve by 0.0006971 with five or six evaluated supports.
 Aer GPU is verified, but at this small workload it is slower than Aer CPU and
 the specialized subspace simulator.
 
-![Frozen-window candidate efficiency](results/final_submission/figures/frozen_window_candidate_efficiency.png)
+![Frozen-window candidate efficiency](../results/final_submission/figures/frozen_window_candidate_efficiency.png)
 
 The width-depth sweep explains the fixed 16-qubit design. The feasible
 subspace $\binom{F}{r}$ grows from 70 states at $F=8,r=4$ to 2,496,144 at
@@ -639,6 +763,15 @@ to 36.57 seconds at width 24. A second QAOA layer often improves QUBO energy
 but increases optimizer evaluations, logical gates, and runtime. Classical LNS
 produces the larger final objective improvement in every matched row of this
 sweep.
+
+At width 16, increasing XY-QAOA from one to two layers improves the allocated
+objective gain from 0.000697 to 0.001181, but optimizer evaluations rise from
+93 to 480 and runtime rises from 0.093 to 0.740 seconds. At width 24, depth-one
+XY-QAOA gains 0.001194 in 36.57 seconds, while LNS gains 0.002448 in 0.150
+seconds. This is why larger ideal subspaces were studied as a limitation rather
+than presented as a scaling advantage.
+
+![Window width and depth sweep](../results/archive/presentation_benchmark_suite/width_depth_sweep.png)
 
 ### 5.8 IBM QPU audit
 
@@ -656,7 +789,39 @@ circuits also reduce survival. Nevertheless, postselection, exact allocation,
 and validation produce zero hard-constraint breaches in all 30 observations.
 The result validates the safety boundary, not noise-free cardinality.
 
-![IBM QPU frontier](results/final_submission/figures/ibm_qpu_frontier.png)
+![IBM QPU frontier](../results/final_submission/figures/ibm_qpu_frontier.png)
+
+Best-tail quality is the normalized quality of the best 10% of postselected
+energies: one matches the exact or best-known QUBO reference and larger is
+better.
+
+| Case | Two-qubit gates | Transpiled depth | Raw survival | Best-tail quality | QPU improvement | Random improvement | Advance? |
+|---|---:|---:|---:|---:|---:|---:|:---:|
+| $F=8,p=1$ | 101 | 171 | 67.13% | 0.997 | 0.002253 | 0.002253 | Yes |
+| $F=12,p=1$ | 162 | 304 | 48.39% | 0.953 | 0.001980 | 0.002186 | No |
+| $F=12,p=3$ | 483 | 923 | 28.04% | 0.980 | 0.002184 | 0.002153 | Yes |
+| $F=16,p=2$ | 411 | 832 | 22.99% | 0.600 | 0.002181 | 0.002198 | No |
+| $F=20,p=2$ | 396 | 843 | 17.33% | 0.704 | 0.002065 | 0.002157 | No |
+| $F=24,p=1$ | 239 | 506 | 17.79% | 0.498 | 0.002044 | 0.002217 | No |
+| $F=28,p=1$ | 294 | 619 | 7.75% | 0.479 | 0.001904 | 0.002233 | No |
+
+The campaign's predeclared go/no-go rule requires at least 20% median
+fixed-weight survival, positive best-tail quality, and a QPU win over matched
+random proposals in at least two of three repetitions. Only three of ten cases
+pass all three gates: $F=8,p=1$, $F=12,p=2$, and $F=12,p=3$. No case at 16
+qubits or above passes the matched-random gate. This result is more informative
+than reporting the 28-qubit maximum alone because it identifies where useful
+proposal quality stops tracking nominal circuit width.
+
+![IBM hardware validation](../results/archive/presentation_benchmark_suite/ibm_qpu_hardware_validation.png)
+
+The single Runtime job contains 30 circuit publications and 245,760 requested
+shots. IBM reports 86.33 seconds of QPU usage, while created-to-finished service
+wall time is 207.06 seconds and the complete batch-result wall measurement is
+264.92 seconds. These timers describe different boundaries and are not added
+together or compared as if they were the same quantity.
+
+![IBM circuit burden and service timing](../results/archive/presentation_benchmark_suite/ibm_qpu_hardware_stress.png)
 
 Proposal quality is less favorable. The QPU objective improvement exceeds the
 matched-random result in only 6 of 30 strict comparisons. Median QPU improvement
@@ -667,7 +832,15 @@ correlation measures whether two rankings agree; one means identical ordering,
 zero means no monotonic ordering. Many top-QUBO supports therefore miss the
 best support after continuous allocation.
 
-![QUBO and allocation alignment](results/final_submission/figures/qubo_alignment.png)
+The matched-budget audit contains 7,500 random-pool trials. It compares QPU
+candidates with random pools matched both by valid unique supports and by raw
+draw count at oracle budgets of 4, 8, 16, 32, and 64. The QPU is competitive in
+the easiest cases, but its advantage does not persist as width grows; classical
+LNS is the strongest method in several of the larger-window panels.
+
+![Matched candidate-pool fairness](../results/archive/presentation_benchmark_suite/06_final_quantum_audit_v6/candidate_pool_fairness_submission.png)
+
+![QUBO and allocation alignment](../results/final_submission/figures/qubo_alignment.png)
 
 The correct conclusion is deliberately narrow: IBM hardware generated usable
 fixed-cardinality candidates through 28 qubits, and the classical safety layer
@@ -710,10 +883,13 @@ streamlit run src/vanguard_portfolio/copilot_app.py
 ### 6.3 Evidence outputs
 
 The curated evidence index is
-`results/final_submission/README.md`. The most important machine-readable files
-are `evidence_summary.csv`, `claim_evidence_map.csv`, the row-level constraint
-certificates, the scaling run tables, and the IBM provenance and frontier
-tables. Figures are explanatory views of those tables, not standalone proof.
+[`results/final_submission/README.md`](../results/final_submission/README.md).
+The complete 224-file source-results index is
+[`results/archive/README.md`](../results/archive/README.md). The most important
+machine-readable files are `evidence_summary.csv`,
+`claim_evidence_map.csv`, the row-level constraint certificates, the scaling
+run tables, and the IBM provenance and frontier tables. Figures are explanatory
+views of those tables, not standalone proof.
 
 ## 7. Discussion
 
@@ -766,10 +942,12 @@ quantum advantage.
 
 Every headline value in this paper maps to a repository table through
 `results/final_submission/claim_evidence_map.csv`. The supplied result archives
-were integrity-tested before analysis. The curated package omits large raw
-diagnostic duplicates from Git but records their source archive SHA-256
-fingerprints. Reproduction should use the published numerical and solver
-settings, pin the required dependencies, preserve seeds, record the new
+were integrity-tested before analysis. The complete scientific evidence is
+published under `results/archive/`; one 73.5 MB diagnostic is losslessly
+compressed. Machine-specific environment metadata is redacted, absolute local
+paths are normalized, and the original file and source-archive SHA-256
+fingerprints are recorded. Reproduction should use the published numerical and
+solver settings, pin the required dependencies, preserve seeds, record the new
 execution environment, and report timeouts or fallbacks rather than
 interpolating missing bounds.
 
@@ -813,70 +991,77 @@ as hardware and encodings improve.
 ## References
 
 1. H. Markowitz, “Portfolio Selection,” *The Journal of Finance*, 7(1),
-   77-91, 1952. https://doi.org/10.1111/j.1540-6261.1952.tb01525.x
+   77-91, 1952.
+   [doi:10.1111/j.1540-6261.1952.tb01525.x](https://doi.org/10.1111/j.1540-6261.1952.tb01525.x)
 2. R. T. Rockafellar and S. Uryasev, “Optimization of Conditional Value-at-Risk,”
    *The Journal of Risk*, 2(3), 21-41, 2000.
-   https://doi.org/10.21314/JOR.2000.038
+   [doi:10.21314/JOR.2000.038](https://doi.org/10.21314/JOR.2000.038)
 3. D. Bienstock, “Computational study of a family of mixed-integer quadratic
    programming problems,” *Mathematical Programming*, 74, 121-140, 1996.
-   https://doi.org/10.1007/BF02592208
+   [doi:10.1007/BF02592208](https://doi.org/10.1007/BF02592208)
 4. H. Kellerer, R. Mansini, and M. G. Speranza, “Selecting Portfolios with Fixed
    Costs and Minimum Transaction Lots,” *Annals of Operations Research*, 99,
-   287-304, 2000. https://doi.org/10.1023/A:1019279918596
+   287-304, 2000.
+   [doi:10.1023/A:1019279918596](https://doi.org/10.1023/A:1019279918596)
 5. B. Stellato, G. Banjac, P. Goulart, A. Bemporad, and S. Boyd, “OSQP: an
    operator splitting solver for quadratic programs,” *Mathematical Programming
    Computation*, 12, 637-672, 2020.
-   https://doi.org/10.1007/s12532-020-00179-2
+   [doi:10.1007/s12532-020-00179-2](https://doi.org/10.1007/s12532-020-00179-2)
 6. E. Farhi, J. Goldstone, and S. Gutmann, “A Quantum Approximate Optimization
-   Algorithm,” arXiv:1411.4028, 2014. https://arxiv.org/abs/1411.4028
+   Algorithm,” arXiv:1411.4028, 2014.
+   [arXiv:1411.4028](https://arxiv.org/abs/1411.4028)
 7. S. Hadfield, Z. Wang, B. O'Gorman, E. Rieffel, D. Venturelli, and R. Biswas,
    “From the Quantum Approximate Optimization Algorithm to a Quantum Alternating
    Operator Ansatz,” *Algorithms*, 12(2), 34, 2019.
-   https://doi.org/10.3390/a12020034
+   [doi:10.3390/a12020034](https://doi.org/10.3390/a12020034)
 8. Z. Wang, N. C. Rubin, J. M. Dominy, and E. G. Rieffel, “XY mixers: Analytical
    and numerical results for the quantum alternating operator ansatz,”
    *Physical Review A*, 101, 012320, 2020.
-   https://doi.org/10.1103/PhysRevA.101.012320
+   [doi:10.1103/PhysRevA.101.012320](https://doi.org/10.1103/PhysRevA.101.012320)
 9. M. Hodson, B. Ruck, H. Ong, D. Garvin, and S. Dulman, “Portfolio rebalancing
    experiments using the Quantum Alternating Operator Ansatz,” arXiv:1911.05296,
-   2019. https://arxiv.org/abs/1911.05296
+   2019. [arXiv:1911.05296](https://arxiv.org/abs/1911.05296)
 10. A. Peruzzo et al., “A variational eigenvalue solver on a photonic quantum
     processor,” *Nature Communications*, 5, 4213, 2014.
-    https://doi.org/10.1038/ncomms5213
+    [doi:10.1038/ncomms5213](https://doi.org/10.1038/ncomms5213)
 11. G. Buonaiuto, F. Gargiulo, G. De Pietro, M. Esposito, and M. Pota, “Best
     practices for portfolio optimization by quantum computing, experimented on
     real quantum devices,” *Scientific Reports*, 13, 19434, 2023.
-    https://doi.org/10.1038/s41598-023-45392-w
+    [doi:10.1038/s41598-023-45392-w](https://doi.org/10.1038/s41598-023-45392-w)
 12. J. V. S. Scursulim et al., “Multiclass portfolio optimization via
     variational quantum Eigensolver with Dicke state ansatz,” *Scientific
     Reports*, 16, 6208, 2026.
-    https://doi.org/10.1038/s41598-026-36333-4
+    [doi:10.1038/s41598-026-36333-4](https://doi.org/10.1038/s41598-026-36333-4)
 13. P. K. Barkoutsos, G. Nannicini, A. Robert, I. Tavernelli, and S. Woerner,
     “Improving Variational Quantum Optimization using CVaR,” *Quantum*, 4, 256,
-    2020. https://doi.org/10.22331/q-2020-04-20-256
+    2020. [doi:10.22331/q-2020-04-20-256](https://doi.org/10.22331/q-2020-04-20-256)
 14. N. N. Hegade et al., “Portfolio optimization with digitized
     counterdiabatic quantum algorithms,” *Physical Review Research*, 4, 043204,
-    2022. https://doi.org/10.1103/PhysRevResearch.4.043204
+    2022.
+    [doi:10.1103/PhysRevResearch.4.043204](https://doi.org/10.1103/PhysRevResearch.4.043204)
 15. S. Mugel et al., “Dynamic portfolio optimization with real datasets using
     quantum processors and quantum-inspired tensor networks,” *Physical Review
     Research*, 4, 013006, 2022.
-    https://doi.org/10.1103/PhysRevResearch.4.013006
+    [doi:10.1103/PhysRevResearch.4.013006](https://doi.org/10.1103/PhysRevResearch.4.013006)
 16. E. Grant, T. S. Humble, and B. Stump, “Benchmarking Quantum Annealing
     Controls with Portfolio Optimization,” *Physical Review Applied*, 15,
-    014012, 2021. https://doi.org/10.1103/PhysRevApplied.15.014012
+    014012, 2021.
+    [doi:10.1103/PhysRevApplied.15.014012](https://doi.org/10.1103/PhysRevApplied.15.014012)
 17. D. Venturelli and A. Kondratyev, “Reverse quantum annealing approach to
     portfolio optimization problems,” *Quantum Machine Intelligence*, 1,
-    17-30, 2019. https://doi.org/10.1007/s42484-019-00001-w
+    17-30, 2019.
+    [doi:10.1007/s42484-019-00001-w](https://doi.org/10.1007/s42484-019-00001-w)
 18. V. P. Soloviev and M. Krompiec, “Large-scale portfolio optimization using
     Pauli correlation encoding,” *Scientific Reports*, 16, 2026.
-    https://doi.org/10.1038/s41598-026-54244-2
+    [doi:10.1038/s41598-026-54244-2](https://doi.org/10.1038/s41598-026-54244-2)
 19. R. Orús, S. Mugel, and E. Lizaso, “Quantum computing for finance: Overview
     and prospects,” *Reviews in Physics*, 4, 100028, 2019.
-    https://doi.org/10.1016/j.revip.2019.100028
+    [doi:10.1016/j.revip.2019.100028](https://doi.org/10.1016/j.revip.2019.100028)
 20. D. J. Egger et al., “Quantum Computing for Finance: State-of-the-Art and
     Future Prospects,” *IEEE Transactions on Quantum Engineering*, 1, 2020.
-    https://doi.org/10.1109/TQE.2020.3030314
+    [doi:10.1109/TQE.2020.3030314](https://doi.org/10.1109/TQE.2020.3030314)
 21. A. Lucas, “Ising formulations of many NP problems,” *Frontiers in Physics*,
-    2, 5, 2014. https://doi.org/10.3389/fphy.2014.00005
+    2, 5, 2014.
+    [doi:10.3389/fphy.2014.00005](https://doi.org/10.3389/fphy.2014.00005)
 22. Vanguard and WISER, “Quantum Challenge: Multi-Asset Portfolio Optimization,”
     challenge brief supplied with the project, 2026.

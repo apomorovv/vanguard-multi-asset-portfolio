@@ -1,0 +1,108 @@
+{
+  "schema_version": 2,
+  "generated_at_utc": "2026-07-20T03:20:57.595552+00:00",
+  "problem": "factor_250_assets",
+  "problem_fingerprint_sha256": "cbb7ab09f9f6c2ad801ab027a0dea2b95e49f884625f39b1ec8d278a82f66d79",
+  "n_assets": 250,
+  "n_groups": 8,
+  "units": 1000,
+  "preferences": {
+    "lambda_return": 1.0,
+    "lambda_risk": 5.0,
+    "lambda_income": 0.0,
+    "lambda_cost": 1.0
+  },
+  "continuous_reference": -0.09852503582877373,
+  "discrete_reference": -0.09852494975131432,
+  "continuous_certified_lower_bound": -0.09852501989170093,
+  "discrete_certified_lower_bound": -0.09852494975131432,
+  "requested_solvers": {
+    "continuous": [
+      {
+        "name": "scipy",
+        "repetitions": 1,
+        "options": {
+          "tol": 1e-08,
+          "max_iter": 5000
+        }
+      },
+      {
+        "name": "osqp",
+        "repetitions": 3,
+        "options": {
+          "tol": 1e-07,
+          "max_iter": 500000
+        }
+      },
+      {
+        "name": "cvxpy:CLARABEL",
+        "repetitions": 3,
+        "options": {
+          "solver_options": {
+            "tol_gap_abs": 1e-08,
+            "tol_feas": 1e-08
+          }
+        }
+      },
+      {
+        "name": "gurobi",
+        "repetitions": 3,
+        "options": {
+          "time_limit": 600,
+          "threads": 0,
+          "seed": 0
+        }
+      }
+    ],
+    "discrete": [
+      {
+        "name": "local_search",
+        "repetitions": 1,
+        "options": {
+          "max_iterations": 2000,
+          "candidate_pool_size": 64,
+          "feasible_start_time_limit": 120
+        }
+      },
+      {
+        "name": "annealing",
+        "repetitions": 1,
+        "options": {
+          "initial_temperature": 0.01,
+          "final_temperature": 1e-06,
+          "local_polish": true,
+          "polish_candidate_pool_size": 64,
+          "feasible_start_time_limit": 120
+        }
+      },
+      {
+        "name": "gurobi",
+        "repetitions": 1,
+        "options": {
+          "time_limit": 600,
+          "mip_gap": 0.001,
+          "threads": 0,
+          "seed": 0,
+          "mip_focus": 1
+        }
+      },
+      {
+        "name": "cvxpy:SCIP",
+        "repetitions": 1,
+        "options": {
+          "solver_options": {
+            "scip_params": {
+              "limits/time": 600,
+              "limits/gap": 0.001
+            }
+          }
+        }
+      }
+    ]
+  },
+  "skipped": {},
+  "environment": {
+    "publication_note": "Executable path, host platform, processor, and installed-package metadata were removed before repository publication.",
+    "source_sha256": "9f736c547565f54094ecdaa5d906d35e59c9882bacfe20d91e968dc151543926"
+  }
+}

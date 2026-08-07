@@ -1,0 +1,104 @@
+problem:
+  source: factor
+  name: factor_250_assets
+  n_assets: 250
+  n_groups: 8
+  n_factors: 6
+  seed: 20260719
+  overrides:
+    target_return: null
+    max_turnover: null
+preferences:
+  preset: balanced
+  lambda_return: 1.0
+  lambda_risk: 5.0
+  lambda_income: 0.0
+  lambda_cost: 1.0
+discrete:
+  units: 1000
+  seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  annealing_iterations: 200000
+solvers:
+  continuous:
+  - name: scipy
+    repetitions: 1
+    options:
+      tol: 1.0e-08
+      max_iter: 5000
+  - name: osqp
+    repetitions: 3
+    options:
+      tol: 1.0e-07
+      max_iter: 500000
+  - name: cvxpy:CLARABEL
+    repetitions: 3
+    options:
+      solver_options:
+        tol_gap_abs: 1.0e-08
+        tol_feas: 1.0e-08
+  - name: gurobi
+    repetitions: 3
+    options:
+      time_limit: 600
+      threads: 0
+      seed: 0
+  discrete:
+  - name: local_search
+    options:
+      max_iterations: 2000
+      candidate_pool_size: 64
+      feasible_start_time_limit: 120
+  - name: annealing
+    options:
+      initial_temperature: 0.01
+      final_temperature: 1.0e-06
+      local_polish: true
+      polish_candidate_pool_size: 64
+      feasible_start_time_limit: 120
+  - name: gurobi
+    options:
+      time_limit: 600
+      mip_gap: 0.001
+      threads: 0
+      seed: 0
+      mip_focus: 1
+  - name: cvxpy:SCIP
+    options:
+      solver_options:
+        scip_params:
+          limits/time: 600
+          limits/gap: 0.001
+  missing_optional: error
+benchmark:
+  require_feasible_results: true
+outputs:
+  directory: results/large_example
+  make_plots: true
+  make_risk_aversion_sweep: true
+  sweep_backend: osqp
+  sweep_options:
+    tol: 1.0e-07
+    max_iter: 500000
+  risk_values:
+  - 0.5
+  - 1.0
+  - 2.0
+  - 5.0
+  - 10.0
+  - 20.0
+  - 50.0
+_runtime:
+  config_path: configs/large_example.yaml
+  output_directory: results/large_example
+  strict_optional: true
+  effective_missing_optional: error

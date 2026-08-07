@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-07-20T03:21:00.480201+00:00",
+  "artifacts": [
+    {
+      "label": "allocations",
+      "path": "allocation_comparison.png",
+      "size_bytes": 139918,
+      "sha256": "cd943aa8f48fefb97cd76ca783a66a5db2264feda9ab8c00e86439c11f001f5d"
+    },
+    {
+      "label": "config",
+      "path": "resolved_config.yaml",
+      "size_bytes": 2023,
+      "sha256": "18c736d62183d9a257b696ea06bab89adaea7a0963a8bd7ce13eebd5cd308e4e"
+    },
+    {
+      "label": "constraint_slacks",
+      "path": "constraint_slacks.png",
+      "size_bytes": 290359,
+      "sha256": "070072d849192ebd704fc151baf9b914dd452c0792a7e0a13fde145130593001"
+    },
+    {
+      "label": "constraints",
+      "path": "constraint_checks.csv",
+      "size_bytes": 1995961,
+      "sha256": "24d125a0086a3008bf6628b428d6a96806b8204a7ddaaffc2b02d708176336de"
+    },
+    {
+      "label": "correlation",
+      "path": "correlation_heatmap.png",
+      "size_bytes": 325027,
+      "sha256": "ae0a10ccd44ac6a0738e50a610be91eb9879dc766ce0faff2f10d669f2a3376a"
+    },
+    {
+      "label": "diagnostics",
+      "path": "solver_diagnostics.json",
+      "size_bytes": 81248,
+      "sha256": "db451558e6b4deca7728970ec5fb7a4f7aec67a148bb3cead28ba92c69f450fa"
+    },
+    {
+      "label": "metadata",
+      "path": "benchmark_metadata.json",
+      "size_bytes": 2996,
+      "sha256": "9f736c547565f54094ecdaa5d906d35e59c9882bacfe20d91e968dc151543926"
+    },
+    {
+      "label": "objective_gap",
+      "path": "objective_gap.png",
+      "size_bytes": 88470,
+      "sha256": "e923618e30467212d22057c288997b45d0e5794688792a7e85f99c6c13e5bdb1"
+    },
+    {
+      "label": "problem",
+      "path": "problem.json",
+      "size_bytes": 3532599,
+      "sha256": "985ebc5e5cbd17b4e113ef7a1e10efa62891cc1b1e12bc8cb0f5accb4de87da6"
+    },
+    {
+      "label": "report",
+      "path": "classical_baseline_report.md",
+      "size_bytes": 1714,
+      "sha256": "6afc6e60388a9c1ebc614b964965d4b02e40f98eca35ccead54fac4f1b85c7d2"
+    },
+    {
+      "label": "risk_return",
+      "path": "risk_return.png",
+      "size_bytes": 85344,
+      "sha256": "8d3878aae0515c0539679a3adf7527cdad9399a99b3af0238598b2e32dc6ff4d"
+    },
+    {
+      "label": "risk_sweep",
+      "path": "risk_aversion_sweep.png",
+      "size_bytes": 90252,
+      "sha256": "62099e71e9c1c9cea2f8ffc311249e692d0cbe46843f01d6d7dcb04b717ae4b6"
+    },
+    {
+      "label": "runs",
+      "path": "benchmark_runs.csv",
+      "size_bytes": 11437,
+      "sha256": "b7ef241d9545bd6a0f141f79d57b9ce9e317975d40c9a583ea7d90ee8330d336"
+    },
+    {
+      "label": "runtime",
+      "path": "runtime_comparison.png",
+      "size_bytes": 75949,
+      "sha256": "a236906b20757265b806db457f1c9fbf86be13c8fb4201dbce78f455193eebce"
+    },
+    {
+      "label": "summary",
+      "path": "benchmark_summary.csv",
+      "size_bytes": 3118,
+      "sha256": "b4ae71fb9e145dc81dec558290fb0b1cad502560fa47c721c978dcdd79d00f7d"
+    }
+  ]
+}
