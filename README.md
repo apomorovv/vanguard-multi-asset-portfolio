@@ -64,6 +64,7 @@ Definitions:
 - **Asset universe:** every asset the solver may consider.
 - **Weight:** the fraction of capital assigned to an asset.
 - **Support:** the set of assets with positive weight.
+- **Allocation:** the continuous percentage assigned to each selected asset.
 - **Cardinality:** the number of selected assets; exact-\(K\) means exactly
   \(K\) holdings.
 - **Continuous guide:** the portfolio solved without the exact-cardinality and
@@ -79,6 +80,18 @@ Definitions:
   weights instead of trusting a solver status alone.
 - **MIP gap:** the normalized distance between a mixed-integer solver's best
   feasible result and its best mathematical bound.
+- **Relaxation:** a simpler optimization problem obtained by temporarily
+  removing exact-cardinality and minimum-active-weight requirements.
+- **Change window:** a small subset of held and unheld assets considered for a
+  local support update.
+- **Allocation oracle:** the continuous optimizer that assigns exact weights to
+  a proposed support and rejects infeasible supports.
+- **QUBO:** a quadratic unconstrained binary optimization surrogate used to rank
+  window bitstrings.
+- **Incumbent:** the best feasible solution currently known to a mixed-integer
+  solver.
+- **Best bound:** a solver bound on the unknown global optimum.
+
 
 The 300,000-asset result is not a 300,000-qubit computation. Quantum execution
 receives only a fixed, adaptive window—typically 16 assets—while classical
