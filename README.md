@@ -121,7 +121,7 @@ The model can enforce:
   selected fraction of scenarios; and
 - implementation or liquidity caps.
 
-Large instances use \(\Sigma=B\Omega B^T+D\), a factor representation. This
+Large instances use $\Sigma=B\Omega B^T+D$, a factor representation. This
 evaluates portfolio risk from common-factor loadings and asset-specific
 variance without materializing a dense \(n\times n\) covariance matrix.
 
