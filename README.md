@@ -99,20 +99,14 @@ factor optimization and validation continue to cover the whole universe.
 
 ## Portfolio model
 
-For new weights \(w\), current weights \(w^0\), expected return \(\mu\), income
-yield \(y\), covariance \(\Sigma\), trading costs \(c\), and absolute turnover
-variables \(t\), the canonical objective is
+For new weights $w$, current weights $w^0$, expected return $\mu$, income yield $y$, covariance $\Sigma$, 
+trading costs $c$, and absolute turnover variables $t$, the canonical objective is 
 
-\[
-\min\; \lambda_r w^T\Sigma w
--\lambda_g\mu^T w
--\lambda_y y^T w
-+\lambda_c c^Tt.
-\]
+$$ \min\; \lambda_r w^T\Sigma w -\lambda_g\mu^T w -\lambda_y y^T w +\lambda_c c^Tt. $$
 
-Risk and cost are minimized; expected growth and income are rewarded. Lower
-objective values are better, but the objective is a composite ranking score,
-not a return percentage.
+Risk and cost are minimized; expected growth and income are rewarded. Lower objective values are better, but 
+the objective is a composite ranking score, not a return percentage.
+
 
 The model can enforce:
 
