@@ -971,6 +971,11 @@ campaign is one backend/calibration campaign, and its queue-inclusive wall time
 is not compared directly with local kernels. No result in this paper establishes
 quantum advantage.
 
+XY-QAOA's coverage is also constraint-dependent, not just noise-dependent.
+Under a tight turnover cap or a tight cardinality target, the method can
+silently fail to return a result at all, rather than returning an infeasible
+or low-quality one (Section 5.9).
+
 ### 7.4 Future Directions and Path to Industrial Use
 
 The current project demonstrates that a hybrid portfolio optimizer can remain **constraint-safe even when the search method is heuristic or quantum**. Its strongest design choice is the separation between proposal and acceptance: search methods propose which assets to hold, while a classical allocation solver assigns the final weights and an independent validator checks every hard constraint.
