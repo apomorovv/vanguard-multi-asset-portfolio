@@ -6,7 +6,7 @@ This document assigns ownership for our  team and defines how model, quantum, an
 
 | Team member | Primary role | Accountable deliverables |
 |---|---|---|
-| **Andrei Pomorov** | Project, mathematical-modeling, and optimization lead | Financial formulation; classical mean-variance, exact-cardinality, and LNS methods; hybrid decomposition; scenario-risk design; classical validation and optimality interpretation; integration of classical and quantum results. |
+| **Andrei Pomorov** | Project, mathematical-modeling, and optimization lead | Financial formulation; Classical/Quantum formulations; classical mean-variance, exact-cardinality, and LNS methods; hybrid decomposition; scenario-risk design; classical validation and optimality interpretation; integration of classical and quantum results. |
 | **Ilia Fazeli** | Quantum algorithms and hardware lead | QUBO/Ising mapping review; XY-QAOA circuit and fixed-weight subspace methods; simulator and IBM QPU protocols; transpilation and noise-management studies; quantum diagnostics and fair quantum-versus-classical comparisons. |
 | **Kirankumar Dhanireddy** | Software engineering, reproducibility, and prototype lead | Repository architecture; canonical schemas and interfaces; packaging, configurations, scripts, tests, and release checks; result/artifact pipeline; Streamlit portfolio co-pilot and reproducible execution workflow. |
 
