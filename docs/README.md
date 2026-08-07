@@ -15,6 +15,7 @@ then to the evidence. New readers should follow the first column in order.
 | 8 | [`validation_protocol.md`](validation_protocol.md) | What must pass before a result can be accepted? |
 | 9 | [`ibm_qpu_experiment.md`](ibm_qpu_experiment.md) | How should IBM hardware be run and compared fairly? |
 | 10 | [`installation.md`](installation.md) | How are CPU, GPU, Gurobi, and IBM environments installed? |
+| 11 | [`team_workflow.md`](team_workflow.md) | How the team collaborates and manages the project? |
 
 The machine-readable audit trail is in
 [`../results/final_submission/`](../results/final_submission/). Use its claim
