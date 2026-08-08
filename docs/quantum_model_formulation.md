@@ -329,7 +329,6 @@ $$
 |D_{F}^{r}\rangle = \frac{1}{\sqrt{\binom{F}{r}}} \sum_{\sum_{i} x_{i} = r} |x\rangle
 $$
 
-r$.
 
 **What you gain:**
 
