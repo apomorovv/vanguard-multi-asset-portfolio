@@ -206,7 +206,8 @@ The QUBO also records:
 - cardinality mode.
 
 A low QUBO energy does not by itself imply a feasible or superior final
-portfolio.
+portfolio. As explained in section 19, a validation phase ensures the
+selection of a feasible solution.
 
 ## 7. Optional Interaction Sparsification
 
