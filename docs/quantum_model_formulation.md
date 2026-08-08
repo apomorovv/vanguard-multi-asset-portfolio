@@ -272,7 +272,14 @@ $$
 \widehat N = \sum_{i=1}^{F}\frac{I-Z_i}{2}
 $$
 
-is the Hamming-weight operator.
+is the Hamming-weight operator. Because $[H_M, \hat{N}] = 0$, $H_M$ conserves the total Hamming weight $\hat{N}$.
+
+Concretely, each term $X_iX_j + Y_iY_j$ acts only within the single-excitation subspace of qubits $i, j$: it swaps $|10\rangle \leftrightarrow |01\rangle$, and annihilates $|00\rangle$ and $|11\rangle$.
+
+So under $H_M$:
+
+- The **positions** of the 1-bits can move (excitations hop between connected qubits).
+- The **number** of 1-bits (the Hamming weight $r$) never changes.
 
 Starting from a state with $r$ ones keeps ideal evolution inside
 
