@@ -270,3 +270,62 @@ factors, and scenarios are estimates. Linear cost does not represent nonlinear
 market impact. Taxes, tax lots, leverage, shorting, and multi-period recourse
 are outside the present scope. Hardware noise, postselection, QPU queueing, and
 weak QUBO/allocation rank alignment currently limit quantum proposal quality.
+
+## Earlier quantum approaches explored (not used in the final pipeline)
+
+[#earlier-quantum-approaches-explored](#earlier-quantum-approaches-explored)
+
+Before settling on the classical-guided window search with an optional
+XY-QAOA proposal step, this project implemented and ran two other
+quantum-first designs: a sampling-based VQE candidate generator, and a
+variant of the same loop using Pauli Correlation Encoding (PCE, Sciorilli
+et al., *Nat. Commun.* 2025) to compress qubit count. Both remain in the
+repository as historical experiments, not as part of the certified pipeline
+in [the final report](docs/portfolio_optimization_report.md).
+
+**Lesson 1: a purely heuristic quantum method cannot be the whole pipeline.**
+When VQE or QAOA output is used directly as the final answer, rather than as
+one candidate generator feeding a classical allocation oracle and validator,
+not every hard constraint is reliably satisfied. This is the core reason the
+final architecture treats quantum proposals as *suggestions inside a frozen
+window*, always followed by an independent classical allocation and
+validation step — the same design documented in Section 3 of the report.
+Constraint satisfaction is a job for the classical layer, not an emergent
+property of the quantum search.
+
+**Lesson 2: PCE trades qubit count for constraint compatibility.** Without
+PCE, one asset costs one qubit, so hardware qubit count is a hard ceiling on
+universe size (e.g. 216 qubits ≈ 216 assets). PCE breaks that 1:1 mapping and
+can represent far more assets per qubit — but the compression introduces a
+fundamental tension with constraint handling that gets worse, not better, as
+asset count grows: larger universes mean less visibility into which sampled
+solutions actually satisfy the encoding's implicit structure. This isn't a
+tuning problem; it appears to be intrinsic to compressing many binary
+decisions onto few qubits while still needing every hard guardrail checked.
+
+**Why this doesn't block PCE forever.** The current pipeline sidesteps the
+qubit-count ceiling a different way: it never puts the whole universe on
+qubits. Only a small, adaptive window (typically 16 assets) is ever proposed
+quantum-mechanically; the rest of the universe is handled classically. That
+architectural choice is why PCE isn't needed today — the qubit-count problem
+PCE was meant to solve doesn't arise in a windowed design. If a future
+version needed a much larger simultaneous window, or true full-universe
+quantum encoding, PCE would be worth revisiting on its own terms, ideally
+paired with a way to certify constraint satisfaction independent of sample
+visibility.
+
+### Running these experiments
+
+These scripts are not part of `pytest`, `run_hybrid.py`, or the notebook.
+Run them individually:
+
+```bash
+python scripts/run_quantum_vqe.py
+python scripts/run_vqe_pce.py
+python scripts/run_qubit_overhead_sweep_by_scale.py
+python scripts/run_scaling_study.py
+python scripts/synthetic_uni_scale.py
+```
+
+Each accepts its own configuration; run any of them with `--help` for
+available options. No claim in the final report depends on their output.
