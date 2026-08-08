@@ -312,7 +312,7 @@ quantum encoding, PCE would be worth revisiting on its own terms, ideally
 paired with a way to certify constraint satisfaction independent of sample
 visibility.
 
-### Running these experiments
+### Running these experiments (optional - not part of the main experiment)
 
 These scripts are not part of `pytest`, `run_hybrid.py`, or the notebook.
 Run them individually:
