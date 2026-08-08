@@ -131,7 +131,7 @@ F(w) = \lambda_{\mathrm{risk}}w^\top\Sigma w -
 \lambda_{\mathrm{cost}}c^\top|w-w^0|.
 $$
 
-Substitution of $\widetilde w(x)$ gives
+Substitution of $\widetilde w(x) $ gives
 
 $$
 F(\widetilde w(x)) = x^\top Qx+h^\top x+\kappa.
