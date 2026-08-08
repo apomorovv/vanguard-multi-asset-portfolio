@@ -273,8 +273,6 @@ weak QUBO/allocation rank alignment currently limit quantum proposal quality.
 
 ## Earlier quantum approaches explored (not used in the final pipeline)
 
-[#earlier-quantum-approaches-explored](#earlier-quantum-approaches-explored)
-
 Before settling on the classical-guided window search with an optional
 XY-QAOA proposal step, this project implemented and ran two other
 quantum-first designs: a sampling-based VQE candidate generator, and a
