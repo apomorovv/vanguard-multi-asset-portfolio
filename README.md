@@ -1,4 +1,4 @@
-# Constraint-Safe Hybrid Portfolio Optimization
+# Vanguard Hybrid Portfolio Optimization
 
 This repository builds a sparse multi-asset portfolio, explains its trade-offs,
 and refuses any result that breaks the configured financial guardrails. It
