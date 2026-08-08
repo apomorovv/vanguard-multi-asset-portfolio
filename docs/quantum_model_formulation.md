@@ -329,7 +329,18 @@ $$
 |D_{F}^{r}\rangle = \frac{1}{\sqrt{\binom{F}{r}}} \sum_{\sum_{i} x_{i} = r} |x\rangle
 $$
 
-It is an ablation that gives equal initial amplitude to all fixed-weight states but requires more expensive preparation.
+r$.
+
+**What you gain:**
+
+- **Unbiased starting point.** Every fixed-weight bitstring gets exactly equal amplitude, so the initial state carries no prior bias toward any particular arrangement of the $r$ ones — the optimizer has to do all the work of discovering structure, rather than inheriting it from a lucky/unlucky initialization.
+- **Symmetry.** $|D_F^r\rangle$ is invariant under any permutation of qubits, matching problems where the objective itself has no preferred ordering (e.g. many combinatorial problems with permutation symmetry).
+- **Clean interpretability.** Because the mixer $H_M$ conserves $\hat N$ (see above), starting exactly in $\mathcal{H}_r$ via $|D_F^r\rangle$ guarantees the entire QAOA trajectory stays in the fixed-weight subspace — the constraint is enforced exactly, with no leakage to correct for.
+
+**What it costs:**
+
+- **Preparation overhead.** Unlike a simple product-state initialization (e.g. $r$ qubits flipped to $|1\rangle$, a single computational basis state), preparing $|D_F^r\rangle$ requires a nontrivial circuit — typically $O(F)$ or $O(F \log F)$ depth depending on the construction — adding real gate/depth cost before optimization even begins.
+- **Ablation trade-off.** Because of this cost, $|D_F^r\rangle$ is best treated as an ablation/comparison point: it isolates the effect of *unbiased* initialization from the effect of the *mixer*, letting you check whether performance gains come from the weight-conserving dynamics alone, or specifically require symmetric initial amplitudes too.
 
 
 ## 12. QAOA State and Objective
