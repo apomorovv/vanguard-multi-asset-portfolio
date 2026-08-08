@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-08-07T04:34:24.739027+00:00",
+  "artifacts": [
+    {
+      "label": "backtest",
+      "path": "backtest_summary.csv",
+      "size_bytes": 834,
+      "sha256": "81bd595d7828250efa1c6fd1e9e143d78f4801ee8272d3baa670c79968ead166"
+    },
+    {
+      "label": "constraint_slacks",
+      "path": "plots/constraint_slacks.png",
+      "size_bytes": 174160,
+      "sha256": "39d7d93f881edad7563f5ca48ae3827cd2278a9ad9b6ef6f681a4dbd33a35c2d"
+    },
+    {
+      "label": "constraint_slacks_pdf",
+      "path": "plots/constraint_slacks.pdf",
+      "size_bytes": 18125,
+      "sha256": "8703d4ff4b49273da7660e1c833aea06b76301af462c3bc0fd5c6e18053c419d"
+    },
+    {
+      "label": "constraints",
+      "path": "constraint_checks.csv",
+      "size_bytes": 18616,
+      "sha256": "fa64c2ccdad3adb0ec1e9e6a4712a37b720ec9c878407e71f0887df9f48576c6"
+    },
+    {
+      "label": "correlation_communities",
+      "path": "plots/correlation_communities.png",
+      "size_bytes": 128745,
+      "sha256": "6cca0f42bd64653086a4dd11f53b9b851d6a0aec1a50dcfdfd643e0619bbf4b4"
+    },
+    {
+      "label": "correlation_communities_pdf",
+      "path": "plots/correlation_communities.pdf",
+      "size_bytes": 30426,
+      "sha256": "e7e54b0f728ec69e85341ff83462f945c6c8d190e237e765a828307d9cbd2bfc"
+    },
+    {
+      "label": "diagnostics",
+      "path": "hybrid_diagnostics.json",
+      "size_bytes": 9468,
+      "sha256": "9eb61ad8e37b79c2f4b5549eb80244baf74f1a1eaa7b045f2152704014324301"
+    },
+    {
+      "label": "factor_exposure",
+      "path": "plots/factor_exposure.png",
+      "size_bytes": 60034,
+      "sha256": "ea55847054c5cfcb08989bf13e1298fc0ed59b90623550f51c1216fabdd2f8c5"
+    },
+    {
+      "label": "factor_exposure_pdf",
+      "path": "plots/factor_exposure.pdf",
+      "size_bytes": 13634,
+      "sha256": "88325c52bc51d572144505c89f62cedb58704e1157ad47d29f229d57764a3c60"
+    },
+    {
+      "label": "group_exposure",
+      "path": "plots/group_exposure.png",
+      "size_bytes": 68740,
+      "sha256": "85f1fb93d886f470c078c49c4cb3cee6a0c2fe6eaa0f2d88d5cee60abdbbfa00"
+    },
+    {
+      "label": "group_exposure_pdf",
+      "path": "plots/group_exposure.pdf",
+      "size_bytes": 16500,
+      "sha256": "82084a9e91abfa3356fb5344d90344408d8f77989a21fb3fdcb58cf3120f5281"
+    },
+    {
+      "label": "key_guardrails",
+      "path": "plots/key_guardrails.png",
+      "size_bytes": 100020,
+      "sha256": "ddde625279e4a3ddb351b8f62cf5c76af52dcc762f6b0092b266ed7990df152a"
+    },
+    {
+      "label": "key_guardrails_pdf",
+      "path": "plots/key_guardrails.pdf",
+      "size_bytes": 18075,
+      "sha256": "4163d6a1113a7977fad70f8a783047d8767bfa3d92b4c11b47c9ae11f8a6896c"
+    },
+    {
+      "label": "objective_runtime",
+      "path": "plots/objective_runtime.png",
+      "size_bytes": 146453,
+      "sha256": "5e77e09e796f57b040eb0d9fb6406f5c584ae060d905b5acaf0d14a2df310c07"
+    },
+    {
+      "label": "objective_runtime_pdf",
+      "path": "plots/objective_runtime.pdf",
+      "size_bytes": 20877,
+      "sha256": "c7ef4842434f773ee5adda271468d1b164f1fc7157a2b4cda6b84a31f845b15a"
+    },
+    {
+      "label": "out_of_sample_backtest",
+      "path": "plots/out_of_sample_backtest.png",
+      "size_bytes": 273743,
+      "sha256": "f42a6e4701da598ecd04cb2fd9a37b9cd6d661c92c752e6882f069b18e0643cd"
+    },
+    {
+      "label": "out_of_sample_backtest_pdf",
+      "path": "plots/out_of_sample_backtest.pdf",
+      "size_bytes": 25200,
+      "sha256": "bed0c4240c4d64631c9d4733c57ac528abc2525271937b1712ffd13d20eab793"
+    },
+    {
+      "label": "quantum_execution",
+      "path": "quantum_execution.csv",
+      "size_bytes": 2117,
+      "sha256": "75ded43b448754f578a56d9416eec29aa3e8267a74f6f484de644752953b57b7"
+    },
+    {
+      "label": "report",
+      "path": "hybrid_report.md",
+      "size_bytes": 1910,
+      "sha256": "16d609311e176708c90f2108a2e9ede671c9324d1060fed001a8ceb700a42d2d"
+    },
+    {
+      "label": "summary",
+      "path": "hybrid_summary.csv",
+      "size_bytes": 2832,
+      "sha256": "d8dce35add8d3722907bbf47ce1324bcd7a4b5c30dbba1a8dd1a6309aaed5674"
+    },
+    {
+      "label": "timeline",
+      "path": "objective_timeline.csv",
+      "size_bytes": 325,
+      "sha256": "33e1c7367de6f873e8a2926c8b759956b8c15a646592fda607236e011993698f"
+    }
+  ]
+}

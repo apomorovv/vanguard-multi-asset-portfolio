@@ -1,0 +1,9 @@
+{
+  "publication_note": "Host, CPU/GPU, platform, and installed-package metadata were removed before repository publication.",
+  "source_sha256": "7736ebe1b0e911436109b2616220367b6ff2ee03ea9df57702f39b9111204c0e",
+  "timestamp_utc": "2026-08-07T04:33:52.594552+00:00",
+  "branch": "research/benchmark-notebook-cleanup",
+  "commit": "571d450be694789be4d57bfa5887fec0b9f594ed",
+  "status": ""
+}
+

@@ -1,0 +1,37 @@
+problem:
+  source: synthetic
+
+preferences:
+  preset: balanced
+
+constraints:
+  exact_cardinality: 4
+  minimum_active_weight: 0.05
+
+hybrid:
+  iterations: 1
+  window_size: 5
+  allocation_backend: scipy
+  initial_milp_time_limit: 5
+  enumerate_windows_up_to: 1000
+  run_quantum: true
+  run_penalty_qaoa: true
+  run_gurobi_reference: false
+  use_topology: true
+  seed: 7
+  quantum:
+    depth: 1
+    shots: 1024
+    optimizer_maxiter: 30
+    optimizer_starts: 2
+    seed: 7
+    backend: subspace
+    top_candidates: 32
+
+backtest:
+  periods: 36
+  periods_per_year: 12
+  seed: 8
+
+outputs:
+  directory: results/tiny_hybrid

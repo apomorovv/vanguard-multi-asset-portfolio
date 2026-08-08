@@ -1,0 +1,4 @@
+elapsed_seconds,iteration,method,objective,stage
+0.2481675110757351,0,feasible_initial_portfolio,-0.028592723627317622,initial
+2.6386969946324825,1,best_valid,-0.031722890914327506,window
+2.953736148774624,1,gurobi_cardinality_miqp,-0.03200993717351801,gurobi

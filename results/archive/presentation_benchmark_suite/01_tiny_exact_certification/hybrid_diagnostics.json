@@ -1,0 +1,168 @@
+{
+  "runtime_seconds": 0.13268842920660973,
+  "artifact_profile": "evaluation",
+  "oracle_calls": 15,
+  "oracle_cache_hits": 17,
+  "skipped": {
+    "iteration_0:xy_qaoa": "xy_qaoa_subspace produced no support accepted by the allocation oracle"
+  },
+  "constraints": {
+    "exact_cardinality": 4,
+    "minimum_active_weight": 0.05,
+    "eligible_assets": null,
+    "mandatory_assets": [],
+    "minimum_income": null,
+    "maximum_cvar": null,
+    "cvar_alpha": 0.95,
+    "maximum_weights": [
+      0.5,
+      0.4,
+      0.5,
+      0.4,
+      0.2,
+      0.3
+    ],
+    "factor_lower": null,
+    "factor_upper": null,
+    "stress_scenarios": null,
+    "stress_floors": null,
+    "scenario_returns": null
+  },
+  "preferences": {
+    "lambda_return": 1.0,
+    "lambda_risk": 5.0,
+    "lambda_income": 0.5,
+    "lambda_cost": 1.0
+  },
+  "config": {
+    "iterations": 1,
+    "window_size": 6,
+    "held_fraction": 0.5,
+    "allocation_backend": "scipy",
+    "allocation_options": {
+      "tol": 1e-09,
+      "max_iter": 5000
+    },
+    "relaxation_options": {
+      "tol": 1e-09,
+      "max_iter": 5000
+    },
+    "allow_relaxation_fallback": false,
+    "initial_trials": 300,
+    "initial_milp_time_limit": 20.0,
+    "classical_tabu_iterations": 60,
+    "classical_tabu_tenure": 7,
+    "classical_oracle_candidates": 4,
+    "enumerate_windows_up_to": 100000,
+    "run_quantum": true,
+    "quantum": {
+      "depth": 1,
+      "shots": 2048,
+      "optimizer_maxiter": 120,
+      "optimizer_starts": 6,
+      "seed": 20260802,
+      "initial_state": "warm",
+      "mixer": "ring",
+      "backend": "subspace",
+      "maximum_subspace_states": 400000,
+      "top_candidates": 128,
+      "transpile_optimization_level": 3,
+      "ibm_backend": null
+    },
+    "run_penalty_qaoa": true,
+    "penalty_multiplier": 10.0,
+    "use_topology": false,
+    "sparsify_threshold": 0.0,
+    "maximum_quantum_edges": null,
+    "run_gurobi_reference": true,
+    "gurobi_time_limit": 120.0,
+    "gurobi_mip_gap": 1e-06,
+    "seed": 20260802
+  },
+  "best_method": "feasible_initial_portfolio",
+  "best_objective": -0.03681145,
+  "quantum": [
+    {
+      "method": "xy_qaoa_subspace",
+      "angles": [
+        2.516189346675498,
+        1.5707982664829592
+      ],
+      "runtime": 0.008010566234588623,
+      "cardinality_feasibility_rate": 1.0,
+      "expected_surrogate_energy": -0.019191874999966597,
+      "best_sampled_energy": -0.019191875000000018,
+      "metadata": {
+        "qubits": 6,
+        "required_ones": 4,
+        "subspace_states": 15,
+        "depth_p": 1,
+        "shots": 2048,
+        "mixer_edges": 6,
+        "cost_edges": 12,
+        "logical_two_qubit_gates": 24,
+        "optimizer_evaluations": 182,
+        "parameter_optimizer_backend": "fixed_weight_subspace_cpu",
+        "cost_center": -0.02128741666666665,
+        "cost_scale": 0.25177329197001835,
+        "exact_expected_surrogate_energy": -0.019191874999966597,
+        "sampled_expected_surrogate_energy": -0.019191875000000018,
+        "unique_sampled_bitstrings": 1,
+        "preprocessing_seconds": 0.00011048838496208191,
+        "angle_optimization_seconds": 0.007578708231449127,
+        "subspace_sampling_seconds": 0.0002292916178703308,
+        "circuit_build_seconds": 0.0,
+        "candidate_ranking_seconds": 2.8852373361587524e-05,
+        "backend": "subspace",
+        "requested_backend": "subspace",
+        "execution_device": "CPU",
+        "gpu_accelerated": false,
+        "device_verification": "not_applicable",
+        "sampler_total_seconds": 0.0002292916178703308,
+        "search_runtime_seconds": 0.008010566234588623
+      }
+    },
+    {
+      "method": "penalty_qaoa_statevector",
+      "angles": [
+        -0.8913079339208703,
+        0.32749004003921184
+      ],
+      "runtime": 0.004925403743982315,
+      "cardinality_feasibility_rate": 0.55615234375,
+      "expected_surrogate_energy": 8.825791340567012,
+      "best_sampled_energy": -0.5012421875000257,
+      "metadata": {
+        "backend": "numpy_statevector",
+        "requested_backend": "numpy_statevector",
+        "execution_device": "CPU",
+        "gpu_accelerated": false,
+        "device_verification": "not_applicable",
+        "parameter_optimizer_backend": "full_state_numpy_cpu",
+        "qubits": 6,
+        "required_ones": 4,
+        "state_count": 64,
+        "depth_p": 1,
+        "shots": 2048,
+        "optimizer_evaluations": 71,
+        "logical_two_qubit_gates": 15,
+        "exact_expected_surrogate_energy": 8.825791340567012,
+        "sampled_expected_surrogate_energy": 8.779321954193092,
+        "unique_sampled_bitstrings": 49,
+        "preprocessing_seconds": 7.251650094985962e-05,
+        "angle_optimization_seconds": 0.004375126212835312,
+        "subspace_sampling_seconds": 0.0003339722752571106,
+        "circuit_build_seconds": 0.0,
+        "candidate_ranking_seconds": 0.00013689324259757996,
+        "sampler_total_seconds": 0.0003339722752571106,
+        "search_runtime_seconds": 0.004925403743982315,
+        "iteration": 0,
+        "allocation_oracle_seconds": 0.0004447177052497864,
+        "window_end_to_end_seconds": 0.0053701214492321014,
+        "evaluated_supports": 15,
+        "feasible_supports": 6,
+        "duplicate_supports": 0
+      }
+    }
+  ]
+}

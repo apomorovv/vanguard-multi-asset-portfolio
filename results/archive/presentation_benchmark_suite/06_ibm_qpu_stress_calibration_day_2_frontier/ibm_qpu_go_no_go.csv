@@ -1,0 +1,11 @@
+case_id,width,depth,repetitions,median_fixed_weight_rate,median_cvar10_quality,qpu_beats_random_repetitions,required_repeat_wins,passes_fixed_weight_20pct,passes_positive_cvar10,passes_matched_random,proceed_harder
+"F=8, p=1",8,1,3,0.6712646484375,0.9970178005659942,3,2,True,True,True,True
+"F=12, p=1",12,1,3,0.48388671875,0.9525346537229415,0,2,True,True,False,False
+"F=12, p=2",12,2,3,0.3382568359375,0.957350362963052,2,2,True,True,True,True
+"F=12, p=3",12,3,3,0.2803955078125,0.9800278033763048,3,2,True,True,True,True
+"F=16, p=1",16,1,3,0.3040771484375,0.621465077840067,0,2,True,True,False,False
+"F=16, p=2",16,2,3,0.2298583984375,0.6003705312694647,1,2,True,True,False,False
+"F=20, p=1",20,1,3,0.296630859375,0.8165155950060926,0,2,True,True,False,False
+"F=20, p=2",20,2,3,0.17333984375,0.7039022098504318,0,2,False,True,False,False
+"F=24, p=1",24,1,3,0.1778564453125,0.4981526605290904,0,2,False,True,False,False
+"F=28, p=1",28,1,3,0.0775146484375,0.4790573654062032,0,2,False,True,False,False

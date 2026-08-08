@@ -1,0 +1,102 @@
+{
+  "backend_override": "ibm_kingston",
+  "base_seed": 20260802,
+  "calibration_day": "calibration_day_2",
+  "campaign": "calibration_day_2_frontier",
+  "cases": [
+    [
+      8,
+      1
+    ],
+    [
+      12,
+      1
+    ],
+    [
+      12,
+      2
+    ],
+    [
+      12,
+      3
+    ],
+    [
+      16,
+      1
+    ],
+    [
+      16,
+      2
+    ],
+    [
+      20,
+      1
+    ],
+    [
+      20,
+      2
+    ],
+    [
+      24,
+      1
+    ],
+    [
+      28,
+      1
+    ]
+  ],
+  "config_sha256": "d872bcc14da0f63b633234b989354c28067d844b799a22cf1f2bd698ee2ae6bf",
+  "fractional_cases": [],
+  "fractional_gates": false,
+  "maximum_edges": 30,
+  "maximum_exact_states": 400000,
+  "maximum_simulated_states": 400000,
+  "noise_modes": [
+    "baseline"
+  ],
+  "optimizer_maxiter": 160,
+  "optimizer_starts": 8,
+  "oracle_budgets": [
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "preset": "frontier",
+  "qiskit": "2.5.1",
+  "qiskit_ibm_runtime": "0.48.0",
+  "qubo_fingerprints": {
+    "F=12, p=1": "430ed92fd8770a462e727b579652e69995fa5aff2b23d57bfb3be3d6775beb0b",
+    "F=12, p=2": "430ed92fd8770a462e727b579652e69995fa5aff2b23d57bfb3be3d6775beb0b",
+    "F=12, p=3": "430ed92fd8770a462e727b579652e69995fa5aff2b23d57bfb3be3d6775beb0b",
+    "F=16, p=1": "651bae920a645be05af555fb0111b378eaef3394d6be7e2fc0d387f27604ef93",
+    "F=16, p=2": "651bae920a645be05af555fb0111b378eaef3394d6be7e2fc0d387f27604ef93",
+    "F=20, p=1": "715831ece9c672284d2e0ca2b67e6e235fe3eaa447010feac479c97afe0577b7",
+    "F=20, p=2": "715831ece9c672284d2e0ca2b67e6e235fe3eaa447010feac479c97afe0577b7",
+    "F=24, p=1": "fbc2eba6143c660df42675eb5cd4da2d869a7a69222578f3e5905031987a18f3",
+    "F=28, p=1": "1781cf5b86f7abe7c3e50ec076655a284614543a29b2702fcac02e8e04bc5c25",
+    "F=8, p=1": "760a3118178113d3482f1324b984b5b4d45cd6392de02b8e81726a9ab3970de1"
+  },
+  "reference_random_states": 20000,
+  "reference_restarts": 512,
+  "repetitions": 3,
+  "schema_version": 3,
+  "shots": 8192,
+  "top_candidates": 64,
+  "transpile_optimization_level": 3,
+  "transpile_seeds": [
+    11,
+    29,
+    47,
+    71,
+    101,
+    131,
+    163,
+    197,
+    239,
+    283,
+    337,
+    397
+  ]
+}

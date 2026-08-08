@@ -1,0 +1,322 @@
+{
+  "backend": "ibm_kingston",
+  "backend_qubits": 156,
+  "backend_version": "1.0.0",
+  "calibration_timestamp": "2026-08-07T00:37:20-04:00",
+  "campaign": "calibration_day_2_frontier",
+  "config_sha256": "d872bcc14da0f63b633234b989354c28067d844b799a22cf1f2bd698ee2ae6bf",
+  "fractional_status": "not_requested",
+  "job_ids": {
+    "baseline": "d9qmec1dsedc73afg2d0"
+  },
+  "pending_jobs_at_submission": 3,
+  "pub_specs_by_mode": {
+    "baseline": [
+      {
+        "case_id": "F=8, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=8, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=8, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=12, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=12, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=12, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=12, p=2",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=12, p=2",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=12, p=2",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=12, p=3",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=12, p=3",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=12, p=3",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=16, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=16, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=16, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=16, p=2",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=16, p=2",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=16, p=2",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=20, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=20, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=20, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=20, p=2",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=20, p=2",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=20, p=2",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=24, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=24, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=24, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      },
+      {
+        "case_id": "F=28, p=1",
+        "circuit_family": "standard",
+        "repetition": 1
+      },
+      {
+        "case_id": "F=28, p=1",
+        "circuit_family": "standard",
+        "repetition": 2
+      },
+      {
+        "case_id": "F=28, p=1",
+        "circuit_family": "standard",
+        "repetition": 3
+      }
+    ]
+  },
+  "schema_version": 3,
+  "submission_seconds": 3.2840992361307144,
+  "submitted_at_utc": "2026-08-07T05:03:44.572397+00:00",
+  "transpiled_metadata": {
+    "standard|F=12, p=1": {
+      "calibrated_log_error_exposure": 0.4749296239859229,
+      "calibrated_operations": 782,
+      "calibration_available": true,
+      "circuit_sha256": "fd0117a80100a5990459bdfa2551986e4205b597dac2fc1fb89671891556f5c1",
+      "independent_error_success_proxy": 0.6219288237965753,
+      "operations_json": "{\"barrier\": 1, \"cz\": 162, \"measure\": 12, \"rz\": 242, \"sx\": 360, \"x\": 6}",
+      "readout_log_error_exposure": 0.07227118589739003,
+      "transpile_seconds": 0.016459345817565918,
+      "transpile_seed": 397,
+      "transpiled_depth": 304,
+      "transpiled_size": 782,
+      "two_qubit_gates": 162,
+      "two_qubit_log_error_exposure": 0.30116679874138474
+    },
+    "standard|F=12, p=2": {
+      "calibrated_log_error_exposure": 0.8924499850431352,
+      "calibrated_operations": 1576,
+      "calibration_available": true,
+      "circuit_sha256": "75875d9979087d381931739c1df2e0959e62f253f4559f749ded677161f30a00",
+      "independent_error_success_proxy": 0.4096508837598634,
+      "operations_json": "{\"barrier\": 1, \"cz\": 321, \"measure\": 12, \"rz\": 499, \"sx\": 735, \"x\": 9}",
+      "readout_log_error_exposure": 0.07968870043532517,
+      "transpile_seconds": 0.034834012389183044,
+      "transpile_seed": 47,
+      "transpiled_depth": 621,
+      "transpiled_size": 1576,
+      "two_qubit_gates": 321,
+      "two_qubit_log_error_exposure": 0.6114860165443555
+    },
+    "standard|F=12, p=3": {
+      "calibrated_log_error_exposure": 1.3185958358237726,
+      "calibrated_operations": 2339,
+      "calibration_available": true,
+      "circuit_sha256": "72fda46df9554aa90f23e30c0b66c92ec5e27ea2147c86730c4d0c040af24dab",
+      "independent_error_success_proxy": 0.267510667262653,
+      "operations_json": "{\"barrier\": 1, \"cz\": 483, \"measure\": 12, \"rz\": 729, \"sx\": 1105, \"x\": 10}",
+      "readout_log_error_exposure": 0.07968870043532518,
+      "transpile_seconds": 0.03866758942604065,
+      "transpile_seed": 101,
+      "transpiled_depth": 923,
+      "transpiled_size": 2339,
+      "two_qubit_gates": 483,
+      "two_qubit_log_error_exposure": 0.9412439221232334
+    },
+    "standard|F=16, p=1": {
+      "calibrated_log_error_exposure": 0.5765119164375269,
+      "calibrated_operations": 926,
+      "calibration_available": true,
+      "circuit_sha256": "0acfa5b934157de052e2578471c34fc680d42b988d82a4e57939f074c98fc8a4",
+      "independent_error_success_proxy": 0.5618547488834134,
+      "operations_json": "{\"barrier\": 1, \"cz\": 198, \"measure\": 16, \"rz\": 274, \"sx\": 430, \"x\": 8}",
+      "readout_log_error_exposure": 0.10554230661502889,
+      "transpile_seconds": 0.01746397837996483,
+      "transpile_seed": 397,
+      "transpiled_depth": 372,
+      "transpiled_size": 926,
+      "two_qubit_gates": 198,
+      "two_qubit_log_error_exposure": 0.3522029142571504
+    },
+    "standard|F=16, p=2": {
+      "calibrated_log_error_exposure": 1.0909739624314942,
+      "calibrated_operations": 1848,
+      "calibration_available": true,
+      "circuit_sha256": "9c92a4687e21c482533a2e85982215ad3cea47bade87c2aef179d77bac18dc62",
+      "independent_error_success_proxy": 0.3358891908892116,
+      "operations_json": "{\"barrier\": 1, \"cz\": 411, \"measure\": 16, \"rz\": 521, \"sx\": 890, \"x\": 10}",
+      "readout_log_error_exposure": 0.13656502037009993,
+      "transpile_seconds": 0.03205646947026253,
+      "transpile_seed": 11,
+      "transpiled_depth": 832,
+      "transpiled_size": 1848,
+      "two_qubit_gates": 411,
+      "two_qubit_log_error_exposure": 0.7003856306421256
+    },
+    "standard|F=20, p=1": {
+      "calibrated_log_error_exposure": 0.6709985055962235,
+      "calibrated_operations": 944,
+      "calibration_available": true,
+      "circuit_sha256": "4ad8df2f7ee2902461767449f011464cf7698aacb9e621e0192196f61e46875d",
+      "independent_error_success_proxy": 0.5111978889132662,
+      "operations_json": "{\"barrier\": 1, \"cz\": 180, \"measure\": 20, \"rz\": 317, \"sx\": 424, \"x\": 3}",
+      "readout_log_error_exposure": 0.2408287556218996,
+      "transpile_seconds": 0.02144351229071617,
+      "transpile_seed": 337,
+      "transpiled_depth": 358,
+      "transpiled_size": 944,
+      "two_qubit_gates": 180,
+      "two_qubit_log_error_exposure": 0.31505657578070806
+    },
+    "standard|F=20, p=2": {
+      "calibrated_log_error_exposure": 1.1605842266728037,
+      "calibrated_operations": 1897,
+      "calibration_available": true,
+      "circuit_sha256": "de7eec005ad451aef4e70f51161a610fc444c78e7b7d4b1ac1392bded12457b7",
+      "independent_error_success_proxy": 0.31330308738343904,
+      "operations_json": "{\"barrier\": 1, \"cz\": 396, \"measure\": 20, \"rz\": 574, \"sx\": 893, \"x\": 14}",
+      "readout_log_error_exposure": 0.19898564321723472,
+      "transpile_seconds": 0.04101463407278061,
+      "transpile_seed": 29,
+      "transpiled_depth": 843,
+      "transpiled_size": 1897,
+      "two_qubit_gates": 396,
+      "two_qubit_log_error_exposure": 0.691630995404834
+    },
+    "standard|F=24, p=1": {
+      "calibrated_log_error_exposure": 0.7911348712165016,
+      "calibrated_operations": 1213,
+      "calibration_available": true,
+      "circuit_sha256": "f3d09bd2fb3f712e0345e6f7519490a0b1709c9625eaeaaac340c6a2675c9370",
+      "independent_error_success_proxy": 0.453330032037674,
+      "operations_json": "{\"barrier\": 1, \"cz\": 239, \"measure\": 24, \"rz\": 381, \"sx\": 561, \"x\": 8}",
+      "readout_log_error_exposure": 0.19404815214089072,
+      "transpile_seconds": 0.03085130825638771,
+      "transpile_seed": 239,
+      "transpiled_depth": 506,
+      "transpiled_size": 1213,
+      "two_qubit_gates": 239,
+      "two_qubit_log_error_exposure": 0.44210144474009805
+    },
+    "standard|F=28, p=1": {
+      "calibrated_log_error_exposure": 0.9535493423499191,
+      "calibrated_operations": 1420,
+      "calibration_available": true,
+      "circuit_sha256": "3003bf53776fa488106f69d63ebcd538ed118cc27a8009481a5bf4f7ccc5bfca",
+      "independent_error_success_proxy": 0.38537078033098443,
+      "operations_json": "{\"barrier\": 1, \"cz\": 294, \"measure\": 28, \"rz\": 427, \"sx\": 665, \"x\": 6}",
+      "readout_log_error_exposure": 0.284584913641651,
+      "transpile_seconds": 0.03887584060430527,
+      "transpile_seed": 101,
+      "transpiled_depth": 619,
+      "transpiled_size": 1420,
+      "two_qubit_gates": 294,
+      "two_qubit_log_error_exposure": 0.5067106001665538
+    },
+    "standard|F=8, p=1": {
+      "calibrated_log_error_exposure": 0.2773572048197862,
+      "calibrated_operations": 497,
+      "calibration_available": true,
+      "circuit_sha256": "725ddb216cff686ba732c62cfb4850972d84d95d00a34fa60ee1bbfc1c084ba5",
+      "independent_error_success_proxy": 0.7577837647468111,
+      "operations_json": "{\"barrier\": 1, \"cz\": 101, \"measure\": 8, \"rz\": 159, \"sx\": 226, \"x\": 3}",
+      "readout_log_error_exposure": 0.04592374701249404,
+      "transpile_seconds": 0.013695284724235535,
+      "transpile_seed": 337,
+      "transpiled_depth": 171,
+      "transpiled_size": 497,
+      "two_qubit_gates": 101,
+      "two_qubit_log_error_exposure": 0.1699993414351495
+    }
+  }
+}
