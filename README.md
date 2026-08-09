@@ -323,6 +323,12 @@ python scripts/run_vqe_pce.py
 python scripts/run_qubit_overhead_sweep_by_scale.py
 python scripts/run_scaling_study.py
 python scripts/synthetic_uni_scale.py
+
+## Team
+
+- **Andrei Pomorov** — apomorov@usf.edu
+- **Ilia Fazeli** — iligili04@icloud.com
+- **Kirankumar Dhanireddy** — kirankumardhanireddy@gmail.com
 ```
 
 Each accepts its own configuration; run any of them with `--help` for
