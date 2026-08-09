@@ -323,13 +323,13 @@ python scripts/run_vqe_pce.py
 python scripts/run_qubit_overhead_sweep_by_scale.py
 python scripts/run_scaling_study.py
 python scripts/synthetic_uni_scale.py
+```
+
+Each accepts its own configuration; run any of them with `--help` for
+available options. No claim in the final report depends on their output.
 
 ## Team
 
 - **Andrei Pomorov** — apomorov@usf.edu
 - **Ilia Fazeli** — iligili04@icloud.com
 - **Kirankumar Dhanireddy** — kirankumardhanireddy@gmail.com
-```
-
-Each accepts its own configuration; run any of them with `--help` for
-available options. No claim in the final report depends on their output.
